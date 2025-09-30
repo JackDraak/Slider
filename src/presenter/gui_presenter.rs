@@ -217,6 +217,10 @@ impl eframe::App for GuiPresenter {
             // Only allow clicks if no animation is running
             let can_interact = self.animation.is_none();
 
+            // Render empty cell first (so it appears behind animating tiles)
+            let empty_pos = self.controller.state().empty_position();
+            self.renderer.render_empty(ui, empty_pos, top_left);
+
             // Render all tiles (with animation if active)
             for (pos, tile) in self.controller.state().tiles() {
                 let render_pos = if let Some(ref anim) = self.animation {
@@ -236,10 +240,6 @@ impl eframe::App for GuiPresenter {
                     clicked_pos = Some(pos);
                 }
             }
-
-            // Render empty cell
-            let empty_pos = self.controller.state().empty_position();
-            self.renderer.render_empty(ui, empty_pos, top_left);
 
             // Handle click after rendering (start animation)
             if let Some(pos) = clicked_pos {
