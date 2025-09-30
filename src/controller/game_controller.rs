@@ -224,7 +224,7 @@ impl GameController {
         if let Some(path) = solver.solve_with_path(&self.state) {
             self.auto_solve = Some(AutoSolveState::new(
                 path,
-                Duration::from_secs(1), // 1 second per move
+                Duration::from_millis(700), // 0.7 seconds per move
             ));
             true
         } else {
