@@ -80,14 +80,32 @@ impl eframe::App for GuiPresenter {
         // Check if animation is complete
         if let Some(ref anim) = self.animation {
             if anim.is_complete() {
+                // Animation done - apply the move if it was an auto-solve move
+                let tile_pos = anim.tile_pos;
                 self.animation = None;
+
+                // Apply the auto-solve move after animation completes
+                if self.controller.is_auto_solving() {
+                    self.controller.apply_auto_solve_move(tile_pos);
+                }
             } else {
                 ctx.request_repaint(); // Continue animating
             }
         }
 
-        // Update auto-solve state (execute moves at 0.7 second intervals)
-        self.controller.update_auto_solve();
+        // Check if auto-solve has a move ready (only if not currently animating)
+        if self.animation.is_none() {
+            if let Some(next_move) = self.controller.get_next_auto_solve_move() {
+                // Start animation for auto-solve move
+                let old_empty = self.controller.state().empty_position();
+                self.animation = Some(TileAnimation::new(
+                    next_move,    // The tile that will move
+                    next_move,    // from its current position
+                    old_empty,    // to the empty position
+                    200,          // 0.2 second animation
+                ));
+            }
+        }
 
         // Request repaint for smooth animation
         if self.controller.is_auto_solving() || self.animation.is_some() {
@@ -234,7 +252,7 @@ impl eframe::App for GuiPresenter {
                         old_empty,     // tile current position (moved to old empty)
                         new_empty,     // from position (where it was)
                         old_empty,     // to position (where it is now)
-                        200,           // 0.2 second animation
+                        300,           // 0.3 second animation
                     ));
                 }
             }

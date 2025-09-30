@@ -247,28 +247,49 @@ impl GameController {
         self.auto_solve.as_ref().map(|s| s.progress())
     }
 
-    /// Updates auto-solve state, executing next move if interval has elapsed
-    /// Returns true if a move was executed
-    pub fn update_auto_solve(&mut self) -> bool {
-        if let Some(ref mut auto_solve) = self.auto_solve {
+    /// Checks if auto-solve has a move ready to execute
+    /// Returns the position to move if it's time for the next move
+    pub fn get_next_auto_solve_move(&mut self) -> Option<Position> {
+        if let Some(ref auto_solve) = self.auto_solve {
             if auto_solve.is_complete() {
-                self.auto_solve = None;
-                return false;
+                return None;
             }
 
             let elapsed = auto_solve.last_move_time.elapsed();
             if elapsed >= auto_solve.move_interval {
-                let next_pos = auto_solve.solution_path[auto_solve.current_step];
-                if self.state.apply_immediate_move(next_pos) {
-                    auto_solve.current_step += 1;
-                    auto_solve.last_move_time = Instant::now();
-                    self.history.record_move();
-                    self.invalidate_cache();
-                    return true;
-                }
+                return Some(auto_solve.solution_path[auto_solve.current_step]);
             }
         }
-        false
+        None
+    }
+
+    /// Executes an auto-solve move and advances to the next step
+    /// Should be called after animation completes
+    pub fn apply_auto_solve_move(&mut self, pos: Position) -> bool {
+        let should_clear;
+
+        if let Some(ref mut auto_solve) = self.auto_solve {
+            if self.state.apply_immediate_move(pos) {
+                auto_solve.current_step += 1;
+                auto_solve.last_move_time = Instant::now();
+
+                // Check if complete before we drop the borrow
+                should_clear = auto_solve.is_complete();
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
+        // Now that auto_solve borrow is dropped, we can mutate self again
+        self.history.record_move();
+        self.invalidate_cache();
+
+        if should_clear {
+            self.auto_solve = None;
+        }
+        true
     }
 }
 
