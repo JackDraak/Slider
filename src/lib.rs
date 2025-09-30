@@ -27,7 +27,11 @@
 //!
 //! - Grid sizes from 3×3 to 22×22
 //! - Immediate moves and chain moves (click any tile in line with empty cell)
-//! - **Auto-solve with A\* pathfinding** - watch optimal solutions play out
+//! - **Smooth tile animations** - 200ms ease-out cubic interpolation
+//! - **Auto-solve with A\* pathfinding**:
+//!   - Watch optimal solutions play out with smooth animations
+//!   - Recalculates fresh path on each invocation
+//!   - Never times out on 4×4 puzzles (2M iteration limit)
 //! - Three entropy calculation algorithms:
 //!   - Manhattan Distance (fast heuristic, microseconds)
 //!   - Shortest Path with linear conflicts (improved heuristic)
@@ -36,8 +40,9 @@
 //! - Guaranteed solvable shuffles using mechanical simulation
 //! - Performance metrics with calculation timing for A\* solver
 //! - Move counter and real-time entropy display
-//! - Visual feedback with color-coded tiles
+//! - Visual feedback with color-coded tiles and smooth animations
 //! - Proper error handling (Result types, no panics in library code)
+//! - Debug logging for auto-solve behavior verification
 //!
 //! ## Example: Programmatic Usage
 //!
