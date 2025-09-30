@@ -26,13 +26,18 @@ impl SearchNode {
 #[derive(Eq, PartialEq)]
 struct HeapEntry {
     f_score: u32,
+    g_score: u32, // Used for tie-breaking
     node_index: usize,
 }
 
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering for min-heap behavior
-        other.f_score.cmp(&self.f_score)
+        // Reverse ordering for min-heap behavior (lower f_score = higher priority)
+        // When f_scores are equal, prefer higher g_score (closer to goal)
+        other
+            .f_score
+            .cmp(&self.f_score)
+            .then_with(|| self.g_score.cmp(&other.g_score))
     }
 }
 
@@ -52,7 +57,7 @@ impl AStarSolver {
     pub fn new() -> Self {
         Self {
             heuristic: ShortestPathHeuristic,
-            max_iterations: 100_000, // Prevent infinite loops on large puzzles
+            max_iterations: 2_000_000, // Very generous limit - should handle all 4×4 puzzles
         }
     }
 
@@ -82,9 +87,11 @@ impl AStarSolver {
         };
 
         let initial_f_score = initial_node.f_score();
+        let initial_g_score = initial_node.g_score;
         node_storage.push(initial_node);
         open_set.push(HeapEntry {
             f_score: initial_f_score,
+            g_score: initial_g_score,
             node_index: 0,
         });
         best_g_scores.insert(self.state_hash(initial_state), 0);
@@ -122,6 +129,11 @@ impl AStarSolver {
                 let tentative_g = node_storage[current_idx].g_score + 1;
                 let next_hash = self.state_hash(&next_state);
 
+                // Skip if this state is already in closed set (fully explored)
+                if closed_set.contains(&next_hash) {
+                    continue;
+                }
+
                 // Skip if we've found a better path to this state
                 if let Some(&best_g) = best_g_scores.get(&next_hash) {
                     if tentative_g >= best_g {
@@ -141,10 +153,12 @@ impl AStarSolver {
                 };
 
                 let f_score = next_node.f_score();
+                let g_score = next_node.g_score;
                 let next_idx = node_storage.len();
                 node_storage.push(next_node);
                 open_set.push(HeapEntry {
                     f_score,
+                    g_score,
                     node_index: next_idx,
                 });
             }
