@@ -1,0 +1,17 @@
+[package]
+name = "slider"
+version = "0.1.0"
+edition = "2021"
+authors = ["Slider Contributors"]
+description = "A sliding-tile puzzle game with entropy-based difficulty and clean MCP architecture"
+repository = "https://github.com/JackDraak/Slider"
+license = "MIT OR Apache-2.0"
+keywords = ["puzzle", "game", "sliding-tile", "fifteen-puzzle"]
+categories = ["games"]
+
+[dependencies]
+egui = "0.30"
+eframe = "0.30"
+rand = "0.8"
+
+[dev-dependencies]
