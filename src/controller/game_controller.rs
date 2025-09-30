@@ -140,6 +140,7 @@ impl GameController {
 
         // Attempt to apply the move (handles both immediate and chain moves)
         if self.state.apply_chain_move(pos) {
+            println!("→ Manual move to {:?} (total moves: {})", pos, self.move_count() + 1);
             self.history.record_move();
             self.invalidate_cache();
             true
@@ -220,20 +221,32 @@ impl GameController {
             return false;
         }
 
+        println!("\n=== AUTO-SOLVE START ===");
+        println!("Current puzzle state entropy (Manhattan): {}", self.current_entropy());
+        println!("Move count: {}", self.move_count());
+
         let solver = AStarSolver::new();
         if let Some(path) = solver.solve_with_path(&self.state) {
+            println!("✓ A* calculated NEW solution path with {} moves", path.len());
+            println!("First 5 moves: {:?}", &path[..path.len().min(5)]);
+
             self.auto_solve = Some(AutoSolveState::new(
                 path,
                 Duration::from_millis(700), // 0.7 seconds per move
             ));
             true
         } else {
+            println!("✗ A* failed to find solution!");
             false
         }
     }
 
     /// Stops auto-solve mode
     pub fn stop_auto_solve(&mut self) {
+        println!("\n=== AUTO-SOLVE STOPPED ===");
+        if let Some(progress) = self.auto_solve_progress() {
+            println!("Stopped at move {}/{}", progress.0, progress.1);
+        }
         self.auto_solve = None;
     }
 
