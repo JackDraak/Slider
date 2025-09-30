@@ -13,7 +13,7 @@ impl TileRenderer {
     }
 
     /// Renders a single tile at the given grid position
-    /// Returns Some(position) if the tile was clicked
+    /// Returns true if the tile was clicked
     pub fn render_tile(
         &self,
         ui: &mut Ui,
@@ -21,9 +21,22 @@ impl TileRenderer {
         grid_pos: (usize, usize),
         top_left: Pos2,
     ) -> bool {
-        let (row, col) = grid_pos;
-        let x = top_left.x + col as f32 * (self.tile_size + self.gap);
-        let y = top_left.y + row as f32 * (self.tile_size + self.gap);
+        self.render_tile_at(ui, tile, grid_pos, (grid_pos.0 as f32, grid_pos.1 as f32), top_left)
+    }
+
+    /// Renders a single tile at a specific rendered position (supports fractional positions for animation)
+    /// Returns true if the tile was clicked
+    pub fn render_tile_at(
+        &self,
+        ui: &mut Ui,
+        tile: &Tile,
+        grid_pos: (usize, usize),
+        render_pos: (f32, f32),
+        top_left: Pos2,
+    ) -> bool {
+        let (row, col) = render_pos;
+        let x = top_left.x + col * (self.tile_size + self.gap);
+        let y = top_left.y + row * (self.tile_size + self.gap);
 
         let rect = Rect::from_min_size(
             Pos2::new(x, y),

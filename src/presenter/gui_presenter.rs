@@ -1,8 +1,55 @@
 use crate::controller::GameController;
-use crate::model::{Difficulty, PerformanceMetrics};
+use crate::model::{Difficulty, PerformanceMetrics, Position};
 use crate::presenter::tile_renderer::TileRenderer;
 use eframe::egui;
 use egui::{CentralPanel, Context, Pos2, TopBottomPanel};
+use std::time::Instant;
+
+/// Animation state for a sliding tile
+#[derive(Debug, Clone)]
+struct TileAnimation {
+    tile_pos: Position,
+    from_pos: Position,
+    to_pos: Position,
+    start_time: Instant,
+    duration_ms: u64,
+}
+
+impl TileAnimation {
+    fn new(tile_pos: Position, from_pos: Position, to_pos: Position, duration_ms: u64) -> Self {
+        Self {
+            tile_pos,
+            from_pos,
+            to_pos,
+            start_time: Instant::now(),
+            duration_ms,
+        }
+    }
+
+    fn progress(&self) -> f32 {
+        let elapsed = self.start_time.elapsed().as_millis() as f32;
+        let duration = self.duration_ms as f32;
+        (elapsed / duration).min(1.0)
+    }
+
+    fn is_complete(&self) -> bool {
+        self.progress() >= 1.0
+    }
+
+    fn current_pos(&self) -> (f32, f32) {
+        let t = self.progress();
+        // Ease-out cubic for smooth deceleration
+        let t = 1.0 - (1.0 - t).powi(3);
+
+        let (from_row, from_col) = self.from_pos;
+        let (to_row, to_col) = self.to_pos;
+
+        let row = from_row as f32 + (to_row as f32 - from_row as f32) * t;
+        let col = from_col as f32 + (to_col as f32 - from_col as f32) * t;
+
+        (row, col)
+    }
+}
 
 /// Main GUI presenter using egui
 pub struct GuiPresenter {
@@ -10,6 +57,7 @@ pub struct GuiPresenter {
     renderer: TileRenderer,
     difficulty: Difficulty,
     show_performance: bool,
+    animation: Option<TileAnimation>,
 }
 
 impl GuiPresenter {
@@ -22,17 +70,27 @@ impl GuiPresenter {
             renderer: TileRenderer::new(tile_size, gap),
             difficulty: Difficulty::Medium,
             show_performance: false,
+            animation: None,
         })
     }
 }
 
 impl eframe::App for GuiPresenter {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // Update auto-solve state (execute moves at 1 second intervals)
+        // Check if animation is complete
+        if let Some(ref anim) = self.animation {
+            if anim.is_complete() {
+                self.animation = None;
+            } else {
+                ctx.request_repaint(); // Continue animating
+            }
+        }
+
+        // Update auto-solve state (execute moves at 0.7 second intervals)
         self.controller.update_auto_solve();
 
         // Request repaint for smooth animation
-        if self.controller.is_auto_solving() {
+        if self.controller.is_auto_solving() || self.animation.is_some() {
             ctx.request_repaint();
         }
 
@@ -138,9 +196,25 @@ impl eframe::App for GuiPresenter {
             // Collect clicked position before modifying state
             let mut clicked_pos = None;
 
-            // Render all tiles
+            // Only allow clicks if no animation is running
+            let can_interact = self.animation.is_none();
+
+            // Render all tiles (with animation if active)
             for (pos, tile) in self.controller.state().tiles() {
-                if self.renderer.render_tile(ui, tile, pos, top_left) {
+                let render_pos = if let Some(ref anim) = self.animation {
+                    // Check if this is the animating tile
+                    if pos == anim.tile_pos {
+                        let (row, col) = anim.current_pos();
+                        (row, col)
+                    } else {
+                        (pos.0 as f32, pos.1 as f32)
+                    }
+                } else {
+                    (pos.0 as f32, pos.1 as f32)
+                };
+
+                let clicked = self.renderer.render_tile_at(ui, tile, pos, render_pos, top_left);
+                if clicked && can_interact {
                     clicked_pos = Some(pos);
                 }
             }
@@ -149,9 +223,20 @@ impl eframe::App for GuiPresenter {
             let empty_pos = self.controller.state().empty_position();
             self.renderer.render_empty(ui, empty_pos, top_left);
 
-            // Handle click after rendering
+            // Handle click after rendering (start animation)
             if let Some(pos) = clicked_pos {
-                self.controller.handle_click(pos);
+                let old_empty = self.controller.state().empty_position();
+                if self.controller.handle_click(pos) {
+                    // Move was successful - start animation
+                    let new_empty = self.controller.state().empty_position();
+                    // The tile that moved is now at the old empty position
+                    self.animation = Some(TileAnimation::new(
+                        old_empty,     // tile current position (moved to old empty)
+                        new_empty,     // from position (where it was)
+                        old_empty,     // to position (where it is now)
+                        200,           // 0.2 second animation
+                    ));
+                }
             }
         });
     }
