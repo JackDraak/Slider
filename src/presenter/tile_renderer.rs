@@ -45,13 +45,30 @@ impl TileRenderer {
 
         let response = ui.allocate_rect(rect, Sense::click());
 
-        // Determine if tile is in correct position
-        let is_correct = tile.home_position == grid_pos;
-        let color = if is_correct {
-            Color32::from_rgb(100, 200, 100)
-        } else {
-            Color32::from_rgb(200, 200, 200)
-        };
+        // Calculate Manhattan distance from home position
+        let manhattan_distance =
+            (tile.home_position.0 as i32 - grid_pos.0 as i32).abs() +
+            (tile.home_position.1 as i32 - grid_pos.1 as i32).abs();
+
+        // Determine color based on Manhattan distance
+        // Distance 0 (home) = light sky blue (135, 206, 235)
+        // Distance 6 (max for 4x4) = pale red (255, 160, 160)
+        // Interpolate between these colors
+        let max_distance = 6.0; // Maximum possible Manhattan distance in 4x4 grid
+        let ratio = (manhattan_distance as f32 / max_distance).min(1.0);
+
+        let blue_r = 135;
+        let blue_g = 206;
+        let blue_b = 235;
+        let red_r = 255;
+        let red_g = 160;
+        let red_b = 160;
+
+        let r = (blue_r as f32 + ratio * (red_r as f32 - blue_r as f32)) as u8;
+        let g = (blue_g as f32 + ratio * (red_g as f32 - blue_g as f32)) as u8;
+        let b = (blue_b as f32 + ratio * (red_b as f32 - blue_b as f32)) as u8;
+
+        let color = Color32::from_rgb(r, g, b);
 
         // Highlight on hover
         let color = if response.hovered() {
