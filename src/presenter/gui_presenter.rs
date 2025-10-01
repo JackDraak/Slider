@@ -59,6 +59,7 @@ pub struct GuiPresenter {
     show_performance: bool,
     animation: Option<TileAnimation>,
     animation_queue: Vec<Position>,  // Queue of moves to animate in sequence
+    status_message: Option<String>,  // Status message for user feedback
 }
 
 impl GuiPresenter {
@@ -73,6 +74,7 @@ impl GuiPresenter {
             show_performance: false,
             animation: None,
             animation_queue: Vec::new(),
+            status_message: None,
         })
     }
 }
@@ -163,12 +165,25 @@ impl eframe::App for GuiPresenter {
                 if self.controller.is_auto_solving() {
                     if ui.button("Stop Solve").clicked() {
                         self.controller.stop_auto_solve();
+                        self.status_message = None;
                     }
                     if let Some((current, total)) = self.controller.auto_solve_progress() {
                         ui.label(format!("{}/{}", current, total));
                     }
                 } else if ui.button("Auto Solve").clicked() {
-                    self.controller.start_auto_solve();
+                    self.status_message = Some("Computing solution...".to_string());
+                    ctx.request_repaint(); // Force UI update to show message
+
+                    if !self.controller.start_auto_solve() {
+                        self.status_message = Some("⚠ No solution found (puzzle too complex or iteration limit reached)".to_string());
+                    } else {
+                        self.status_message = None;
+                    }
+                }
+
+                // Display status message if present
+                if let Some(ref msg) = self.status_message {
+                    ui.label(msg);
                 }
 
                 ui.separator();
