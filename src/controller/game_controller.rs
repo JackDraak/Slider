@@ -4,7 +4,9 @@ use crate::model::{
     MoveValidator, PerformanceMetrics, PerformanceTimer, Position, PuzzleError, PuzzleState,
     ShortestPathHeuristic,
 };
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -43,7 +45,7 @@ impl MoveHistory {
 
 /// Auto-solve computation state (running in background thread)
 pub enum SolverState {
-    Computing(JoinHandle<Option<(Vec<Position>, u64)>>, Receiver<()>, bool), // handle, cancel, is_for_autosolve
+    Computing(JoinHandle<Option<(Vec<Position>, u64)>>, Arc<AtomicBool>, bool), // handle, cancel_flag, is_for_autosolve
     Ready(Vec<Position>, u64), // path, solve_time_micros
     Failed,
 }
@@ -145,17 +147,23 @@ impl GameController {
 
     /// Starts a new game with the specified difficulty
     pub fn new_game(&mut self, difficulty: Difficulty) {
+        // Clean up any running background solver by signaling cancellation
+        if let Some(SolverState::Computing(_handle, cancel_flag, _)) = self.solver_state.take() {
+            cancel_flag.store(true, AtomicOrdering::Relaxed);
+            // Thread will check the flag and exit gracefully
+        }
+
         // Size is guaranteed valid since controller was constructed successfully
         self.state = PuzzleState::new(self.state.size()).expect("valid size");
         self.history.reset();
-        
+
         // Use shuffle_with_result to track shuffle information
         let shuffle_result = self.shuffle_controller.shuffle_with_result(
             &mut self.state,
             difficulty,
             self.entropy_calculator.as_ref(),
         );
-        
+
         self.last_shuffle_result = Some(shuffle_result);
         self.invalidate_cache();
         self.auto_solve = None;
@@ -176,19 +184,22 @@ impl GameController {
 
         // Clone the state to send to the thread
         let state = self.state.clone();
-        let (_cancel_tx, cancel_rx) = channel::<()>();
+
+        // Create cancellation flag
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_clone = cancel_flag.clone();
 
         // Spawn solver in background thread
         let handle = thread::spawn(move || {
             let timer = PerformanceTimer::start();
             let solver = AStarSolver::new();
-            let result = solver.solve_with_path(&state);
+            let result = solver.solve_with_path_cancellable(&state, Some(cancel_clone));
             let solve_time = timer.elapsed_micros();
 
             result.map(|path| (path, solve_time))
         });
 
-        self.solver_state = Some(SolverState::Computing(handle, cancel_rx, false)); // false = not for auto-solve
+        self.solver_state = Some(SolverState::Computing(handle, cancel_flag, false)); // false = not for auto-solve
     }
 
     /// Handles a player click at the given position
@@ -292,6 +303,12 @@ impl GameController {
 
     /// Resets to a new solved puzzle
     pub fn reset(&mut self) {
+        // Clean up any running background solver by signaling cancellation
+        if let Some(SolverState::Computing(_handle, cancel_flag, _)) = self.solver_state.take() {
+            cancel_flag.store(true, AtomicOrdering::Relaxed);
+            // Thread will check the flag and exit gracefully
+        }
+
         // Size is guaranteed valid since controller was constructed successfully
         self.state = PuzzleState::new(self.state.size()).expect("valid size");
         self.history.reset();
@@ -342,20 +359,21 @@ impl GameController {
         // Clone the state to send to the thread
         let state = self.state.clone();
 
-        // Create a channel for cancellation (unused for now, but allows future timeout)
-        let (_cancel_tx, cancel_rx) = channel::<()>();
+        // Create cancellation flag
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_clone = cancel_flag.clone();
 
         // Spawn solver in background thread
         let handle = thread::spawn(move || {
             let timer = PerformanceTimer::start();
             let solver = AStarSolver::new();
-            let result = solver.solve_with_path(&state);
+            let result = solver.solve_with_path_cancellable(&state, Some(cancel_clone));
             let solve_time = timer.elapsed_micros();
 
             result.map(|path| (path, solve_time))
         });
 
-        self.solver_state = Some(SolverState::Computing(handle, cancel_rx, true)); // true = for auto-solve
+        self.solver_state = Some(SolverState::Computing(handle, cancel_flag, true)); // true = for auto-solve
         true
     }
 
@@ -366,7 +384,7 @@ impl GameController {
         let state = self.solver_state.take();
 
         match state {
-            Some(SolverState::Computing(handle, _cancel_rx, is_for_autosolve)) => {
+            Some(SolverState::Computing(handle, cancel_flag, is_for_autosolve)) => {
                 // Check if thread is done (non-blocking)
                 if handle.is_finished() {
                     match handle.join() {
@@ -409,7 +427,7 @@ impl GameController {
                     }
                 } else {
                     // Still computing, put it back
-                    self.solver_state = Some(SolverState::Computing(handle, _cancel_rx, is_for_autosolve));
+                    self.solver_state = Some(SolverState::Computing(handle, cancel_flag, is_for_autosolve));
                 }
             }
             Some(other) => {

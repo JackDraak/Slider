@@ -6,6 +6,8 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::Arc;
 
 /// Represents a state in the A* search
 #[derive(Clone)]
@@ -70,6 +72,16 @@ impl AStarSolver {
     /// Returns the optimal solution path as a sequence of tile positions to move
     /// Returns None if unsolvable or timeout
     pub fn solve_with_path(&self, initial_state: &PuzzleState) -> Option<Vec<Position>> {
+        self.solve_with_path_cancellable(initial_state, None)
+    }
+
+    /// Returns the optimal solution path with support for cancellation
+    /// Returns None if unsolvable, timeout, or cancelled
+    pub fn solve_with_path_cancellable(
+        &self,
+        initial_state: &PuzzleState,
+        cancel_flag: Option<Arc<AtomicBool>>,
+    ) -> Option<Vec<Position>> {
         if initial_state.is_solved() {
             return Some(Vec::new());
         }
@@ -104,6 +116,16 @@ impl AStarSolver {
 
         while let Some(HeapEntry { node_index: current_idx, .. }) = open_set.pop() {
             iterations += 1;
+
+            // Check for cancellation every 1000 iterations
+            if iterations % 1000 == 0 {
+                if let Some(ref cancel) = cancel_flag {
+                    if cancel.load(AtomicOrdering::Relaxed) {
+                        return None; // Cancelled
+                    }
+                }
+            }
+
             if iterations > self.max_iterations {
                 return None; // Timeout
             }
