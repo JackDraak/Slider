@@ -50,7 +50,7 @@ impl EntropyCalculator for ShortestPathHeuristic {
 
 /// Counts linear conflicts: pairs of tiles in the same row or column
 /// that are in their target row/column but in reverse order
-fn count_linear_conflicts(state: &PuzzleState) -> u32 {
+pub fn count_linear_conflicts(state: &PuzzleState) -> u32 {
     let mut conflicts = 0;
 
     // Check row conflicts
@@ -104,12 +104,13 @@ fn count_linear_conflicts(state: &PuzzleState) -> u32 {
     conflicts
 }
 
-/// Difficulty levels based on entropy thresholds
+/// Difficulty levels based on entropy thresholds and shuffle move caps
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Difficulty {
     Easy,
     Medium,
     Hard,
+    ExtraHard,
 }
 
 impl Difficulty {
@@ -121,6 +122,17 @@ impl Difficulty {
             Difficulty::Easy => scale / 2,
             Difficulty::Medium => scale,
             Difficulty::Hard => scale * 2,
+            Difficulty::ExtraHard => scale * 3,
+        }
+    }
+
+    /// Returns the maximum number of shuffle moves for this difficulty
+    pub fn max_shuffle_moves(&self, grid_size: usize) -> usize {
+        match self {
+            Difficulty::Easy => grid_size * 2,
+            Difficulty::Medium => grid_size * 6,
+            Difficulty::Hard => grid_size * 12,
+            Difficulty::ExtraHard => usize::MAX, // No cap for extra hard
         }
     }
 }

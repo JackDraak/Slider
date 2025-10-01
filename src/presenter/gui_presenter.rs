@@ -164,6 +164,7 @@ impl eframe::App for GuiPresenter {
                 ui.radio_value(&mut self.difficulty, Difficulty::Easy, "Easy");
                 ui.radio_value(&mut self.difficulty, Difficulty::Medium, "Medium");
                 ui.radio_value(&mut self.difficulty, Difficulty::Hard, "Hard");
+                ui.radio_value(&mut self.difficulty, Difficulty::ExtraHard, "Extra Hard");
 
                 ui.separator();
 
@@ -211,8 +212,16 @@ impl eframe::App for GuiPresenter {
 
                 ui.separator();
 
-                // Move counter
-                ui.label(format!("Moves: {}", self.controller.move_count()));
+                // Move counter with shuffle info
+                if let Some(shuffle_result) = self.controller.last_shuffle_result() {
+                    ui.label(format!(
+                        "Moves: {} [shuffle: {}]",
+                        self.controller.move_count(),
+                        shuffle_result.moves_made
+                    ));
+                } else {
+                    ui.label(format!("Moves: {}", self.controller.move_count()));
+                }
 
                 ui.separator();
 

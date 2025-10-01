@@ -49,12 +49,12 @@ impl ShuffleController {
         calculator: &dyn EntropyCalculator,
     ) -> ShuffleResult {
         let target_entropy = difficulty.min_entropy(state.size());
+        let max_moves = difficulty.max_shuffle_moves(state.size());
         let mut rng = thread_rng();
         let mut previous_empty: Option<Position> = None;
-        let max_attempts = 1000;
         let mut moves_made = 0;
 
-        while calculator.calculate(state) < target_entropy && moves_made < max_attempts {
+        while calculator.calculate(state) < target_entropy && moves_made < max_moves {
             let current_empty = state.empty_position();
             let mut moves = self.validator.get_immediate_moves(current_empty);
 

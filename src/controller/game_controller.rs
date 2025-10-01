@@ -308,6 +308,22 @@ impl GameController {
             return false;
         }
 
+        // Check if we have a cached solution ready to use
+        if let Some(SolverState::Ready(path, solve_time)) = self.solver_state.take() {
+            println!("\n=== AUTO-SOLVE START (using cached solution) ===");
+            println!("Cached solution: {} moves", path.len());
+            println!("Original solve time: {}", PerformanceMetrics::format_duration(solve_time));
+
+            self.auto_solve = Some(AutoSolveState::new(
+                path.clone(),
+                Duration::from_millis(700),
+            ));
+
+            // Put the cached solution back for future use
+            self.solver_state = Some(SolverState::Ready(path, solve_time));
+            return true;
+        }
+
         // Clear failed state from previous attempts
         if matches!(self.solver_state, Some(SolverState::Failed)) {
             self.solver_state = None;
@@ -371,12 +387,16 @@ impl GameController {
                             // Only transition to auto-solve animation if this was for auto-solve
                             if is_for_autosolve {
                                 self.auto_solve = Some(AutoSolveState::new(
-                                    path,
+                                    path.clone(),
                                     Duration::from_millis(700), // 0.7 seconds per move
                                 ));
+                                // Cache the solution for reuse
+                                self.solver_state = Some(SolverState::Ready(path, solve_time));
                                 return true;
+                            } else {
+                                // Cache for later use
+                                self.solver_state = Some(SolverState::Ready(path, solve_time));
                             }
-                            // Otherwise just keep the time and length for metrics display
                         }
                         Ok(None) => {
                             println!("✗ A* failed to find solution!");
