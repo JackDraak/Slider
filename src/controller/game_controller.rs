@@ -1,7 +1,7 @@
 use crate::controller::shuffle_controller::ShuffleController;
 use crate::model::{
     AStarSolver, ActualSolutionLength, Difficulty, EntropyCalculator, ManhattanDistance,
-    PerformanceMetrics, PerformanceTimer, Position, PuzzleError, PuzzleState,
+    MoveValidator, PerformanceMetrics, PerformanceTimer, Position, PuzzleError, PuzzleState,
     ShortestPathHeuristic,
 };
 use std::time::{Duration, Instant};
@@ -131,21 +131,31 @@ impl GameController {
     }
 
     /// Handles a player click at the given position
-    /// Returns true if a valid move was made
-    pub fn handle_click(&mut self, pos: Position) -> bool {
+    /// Returns the sequence of immediate moves if valid (for animation)
+    /// Returns None if invalid click or no move possible
+    pub fn handle_click(&mut self, pos: Position) -> Option<Vec<Position>> {
         // Check if there's a tile at the clicked position
         if self.state.tile_at(pos).is_none() {
-            return false;
+            return None;
         }
 
-        // Attempt to apply the move (handles both immediate and chain moves)
-        if self.state.apply_chain_move(pos) {
-            println!("→ Manual move to {:?} (total moves: {})", pos, self.move_count() + 1);
+        // Get the chain move sequence (if valid)
+        let validator = MoveValidator::new(self.state.size()).expect("valid size");
+        if let Some(moves) = validator.resolve_chain_move(pos, self.state.empty_position()) {
+            // Apply all moves
+            for &move_pos in &moves {
+                if !self.state.apply_immediate_move(move_pos) {
+                    return None; // Something went wrong
+                }
+            }
+
+            println!("→ Manual move to {:?} ({} tiles moved, total moves: {})",
+                pos, moves.len(), self.move_count() + 1);
             self.history.record_move();
             self.invalidate_cache();
-            true
+            Some(moves)
         } else {
-            false
+            None
         }
     }
 
@@ -331,7 +341,7 @@ mod tests {
         let mut controller = GameController::new(4).unwrap();
         let result = controller.handle_click((3, 2));
 
-        assert!(result);
+        assert!(result.is_some());
         assert_eq!(controller.move_count(), 1);
         assert!(!controller.is_solved());
     }
@@ -341,7 +351,8 @@ mod tests {
         let mut controller = GameController::new(4).unwrap();
         let result = controller.handle_click((3, 0));
 
-        assert!(result);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 3); // Chain of 3 moves
         assert_eq!(controller.move_count(), 1); // Counts as one move
         assert_eq!(controller.state().empty_position(), (3, 0));
     }
@@ -351,7 +362,7 @@ mod tests {
         let mut controller = GameController::new(4).unwrap();
         let result = controller.handle_click((0, 0));
 
-        assert!(!result); // Diagonal, not valid
+        assert!(result.is_none()); // Diagonal, not valid
         assert_eq!(controller.move_count(), 0);
     }
 
@@ -361,7 +372,7 @@ mod tests {
         let empty_pos = controller.state().empty_position();
         let result = controller.handle_click(empty_pos);
 
-        assert!(!result);
+        assert!(result.is_none());
         assert_eq!(controller.move_count(), 0);
     }
 

@@ -58,6 +58,7 @@ pub struct GuiPresenter {
     difficulty: Difficulty,
     show_performance: bool,
     animation: Option<TileAnimation>,
+    animation_queue: Vec<Position>,  // Queue of moves to animate in sequence
 }
 
 impl GuiPresenter {
@@ -71,6 +72,7 @@ impl GuiPresenter {
             difficulty: Difficulty::Medium,
             show_performance: false,
             animation: None,
+            animation_queue: Vec::new(),
         })
     }
 }
@@ -80,7 +82,7 @@ impl eframe::App for GuiPresenter {
         // Check if animation is complete
         if let Some(ref anim) = self.animation {
             if anim.is_complete() {
-                // Animation done - apply the move if it was an auto-solve move
+                // Animation done
                 let tile_pos = anim.tile_pos;
                 self.animation = None;
 
@@ -88,27 +90,39 @@ impl eframe::App for GuiPresenter {
                 if self.controller.is_auto_solving() {
                     self.controller.apply_auto_solve_move(tile_pos);
                 }
+
+                // Start next animation in queue (for chain moves)
+                if let Some(next_pos) = self.animation_queue.first().copied() {
+                    self.animation_queue.remove(0);
+                    let old_empty = self.controller.state().empty_position();
+                    self.animation = Some(TileAnimation::new(
+                        next_pos,
+                        next_pos,
+                        old_empty,
+                        200,
+                    ));
+                }
             } else {
                 ctx.request_repaint(); // Continue animating
             }
         }
 
         // Check if auto-solve has a move ready (only if not currently animating)
-        if self.animation.is_none() {
+        if self.animation.is_none() && self.animation_queue.is_empty() {
             if let Some(next_move) = self.controller.get_next_auto_solve_move() {
                 // Start animation for auto-solve move
                 let old_empty = self.controller.state().empty_position();
                 self.animation = Some(TileAnimation::new(
-                    next_move,    // The tile that will move
-                    next_move,    // from its current position
-                    old_empty,    // to the empty position
-                    200,          // 0.2 second animation
+                    next_move,
+                    next_move,
+                    old_empty,
+                    200,
                 ));
             }
         }
 
         // Request repaint for smooth animation
-        if self.controller.is_auto_solving() || self.animation.is_some() {
+        if self.controller.is_auto_solving() || self.animation.is_some() || !self.animation_queue.is_empty() {
             ctx.request_repaint();
         }
 
@@ -241,19 +255,26 @@ impl eframe::App for GuiPresenter {
                 }
             }
 
-            // Handle click after rendering (start animation)
+            // Handle click after rendering (start animation sequence)
             if let Some(pos) = clicked_pos {
                 let old_empty = self.controller.state().empty_position();
-                if self.controller.handle_click(pos) {
-                    // Move was successful - start animation
-                    let new_empty = self.controller.state().empty_position();
-                    // The tile that moved is now at the old empty position
-                    self.animation = Some(TileAnimation::new(
-                        old_empty,     // tile current position (moved to old empty)
-                        new_empty,     // from position (where it was)
-                        old_empty,     // to position (where it is now)
-                        300,           // 0.3 second animation
-                    ));
+                if let Some(move_sequence) = self.controller.handle_click(pos) {
+                    // Move was successful - queue animations for all moves in sequence
+                    if !move_sequence.is_empty() {
+                        // Start first animation immediately
+                        let first_move = move_sequence[0];
+                        self.animation = Some(TileAnimation::new(
+                            first_move,
+                            first_move,
+                            old_empty,
+                            200,
+                        ));
+
+                        // Queue remaining animations (for chain moves)
+                        if move_sequence.len() > 1 {
+                            self.animation_queue = move_sequence[1..].to_vec();
+                        }
+                    }
                 }
             }
         });
