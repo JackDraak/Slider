@@ -6,7 +6,7 @@ A Rust implementation of the classic sliding-tile puzzle (also known as the "fif
 
 ## Features
 
-- **Configurable Grid Sizes**: Play on grids from 3×3 to 22×22 (default 4×4)
+- **Configurable Grid Sizes**: Play on grids from 3×3 to 15×15 (default 4×4)
 - **Smart Move System**:
   - Immediate moves for adjacent tiles
   - Chain moves by clicking any tile in line with the empty cell

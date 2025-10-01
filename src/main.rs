@@ -7,8 +7,8 @@ fn main() -> eframe::Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(4);
 
-    if grid_size < 3 || grid_size > 22 {
-        eprintln!("Grid size must be between 3 and 22");
+    if grid_size < 3 || grid_size > 15 {
+        eprintln!("Grid size must be between 3 and 15");
         std::process::exit(1);
     }
 

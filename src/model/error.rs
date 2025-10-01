@@ -5,7 +5,7 @@ use std::fmt;
 pub enum PuzzleError {
     /// Grid size is below minimum (3)
     SizeTooSmall { size: usize, min: usize },
-    /// Grid size is above maximum (22)
+    /// Grid size is above maximum (15)
     SizeTooLarge { size: usize, max: usize },
     /// Invalid move attempted
     InvalidMove { position: (usize, usize) },
@@ -114,10 +114,10 @@ mod tests {
             "Puzzle size 2 is too small (minimum: 3)"
         );
 
-        let err = PuzzleError::SizeTooLarge { size: 23, max: 22 };
+        let err = PuzzleError::SizeTooLarge { size: 16, max: 15 };
         assert_eq!(
             err.to_string(),
-            "Puzzle size 23 is too large (maximum: 22)"
+            "Puzzle size 16 is too large (maximum: 15)"
         );
     }
 

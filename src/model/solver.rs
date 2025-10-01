@@ -64,7 +64,7 @@ impl AStarSolver {
     pub fn new() -> Self {
         Self {
             heuristic: ShortestPathHeuristic,
-            max_iterations: 100_000,  // Reduced from 2M for better UI responsiveness
+            max_iterations: 500_000,  // Reduced from 2M for better UI responsiveness
             use_patterns: false,
             pattern_catalog: None,
             relative_patterns: None,
@@ -76,7 +76,7 @@ impl AStarSolver {
     pub fn with_patterns(grid_size: usize) -> Self {
         Self {
             heuristic: ShortestPathHeuristic,
-            max_iterations: 100_000,  // Reduced from 2M for better UI responsiveness
+            max_iterations: 500_000,  // Reduced from 2M for better UI responsiveness
             use_patterns: true,
             pattern_catalog: Some(PatternCatalog::new(grid_size)),
             relative_patterns: None,
@@ -88,7 +88,7 @@ impl AStarSolver {
     pub fn with_relative_patterns() -> Self {
         Self {
             heuristic: ShortestPathHeuristic,
-            max_iterations: 100_000,  // Reduced from 2M for better UI responsiveness
+            max_iterations: 500_000,  // Reduced from 2M for better UI responsiveness
             use_patterns: true,
             pattern_catalog: None,
             relative_patterns: Some(RelativePatternCatalog::new()),
@@ -104,7 +104,7 @@ impl AStarSolver {
 
         Self {
             heuristic: ShortestPathHeuristic,
-            max_iterations: 100_000,  // Reduced from 2M for better UI responsiveness
+            max_iterations: 500_000,  // Reduced from 2M for better UI responsiveness
             use_patterns: true,
             pattern_catalog: None,
             relative_patterns: None,

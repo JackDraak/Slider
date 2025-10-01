@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Puzzle Mechanics
 
-- Grid sizes: 3×3 to 22×22 (default 4×4)
+- Grid sizes: 3×3 to 15×15 (default 4×4)
 - A 4×4 puzzle has 16 cells with 15 numbered tiles and 1 empty cell
 - **Core mechanic**: Tiles adjacent to the empty cell can slide into the empty space
 - **Chain moves**: Series of tiles in line with empty cell can be moved sequentially (e.g., click tile 13 when empty is at 16 → moves 15→16, 14→15, 13→14)

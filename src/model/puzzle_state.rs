@@ -4,7 +4,7 @@ use super::tile::Tile;
 
 /// Constants for puzzle size limits
 pub const MIN_SIZE: usize = 3;
-pub const MAX_SIZE: usize = 22;
+pub const MAX_SIZE: usize = 15;
 
 /// Represents the current state of the puzzle
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ impl PuzzleState {
     /// # Errors
     ///
     /// Returns `PuzzleError::SizeTooSmall` if size < 3
-    /// Returns `PuzzleError::SizeTooLarge` if size > 22
+    /// Returns `PuzzleError::SizeTooLarge` if size > 15
     pub fn new(size: usize) -> Result<Self, PuzzleError> {
         if size < MIN_SIZE {
             return Err(PuzzleError::SizeTooSmall {

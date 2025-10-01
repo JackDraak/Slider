@@ -25,7 +25,7 @@
 //!
 //! ## Features
 //!
-//! - Grid sizes from 3×3 to 22×22
+//! - Grid sizes from 3×3 to 15×15
 //! - Immediate moves and chain moves (click any tile in line with empty cell)
 //! - **Smooth tile animations** - 200ms ease-out cubic interpolation
 //! - **Auto-solve with A\* pathfinding**:

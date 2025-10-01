@@ -64,8 +64,17 @@ pub struct GuiPresenter {
 
 impl GuiPresenter {
     pub fn new(grid_size: usize) -> Result<Self, crate::model::PuzzleError> {
-        let tile_size = 80.0;
+        // Dynamic tile sizing based on grid size to fit screen
+        // Target total grid size ~600px (leaves room for UI controls)
+        let target_grid_size = 600.0;
         let gap = 5.0;
+
+        // Calculate tile size: (target - gaps) / grid_size
+        // Number of gaps = grid_size - 1
+        let tile_size = (target_grid_size - (grid_size as f32 - 1.0) * gap) / grid_size as f32;
+
+        // Clamp to reasonable min/max for usability
+        let tile_size = tile_size.max(30.0).min(100.0);
 
         Ok(Self {
             controller: GameController::new(grid_size)?,
