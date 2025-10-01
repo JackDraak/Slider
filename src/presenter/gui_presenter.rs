@@ -90,6 +90,12 @@ impl GuiPresenter {
 
 impl eframe::App for GuiPresenter {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // Poll solver state (non-blocking)
+        if self.controller.update_solver_state() {
+            // Solution ready, animation will start automatically
+            self.status_message = None;
+        }
+
         // Check if animation is complete
         if let Some(ref anim) = self.animation {
             if anim.is_complete() {
@@ -138,8 +144,11 @@ impl eframe::App for GuiPresenter {
             }
         }
 
-        // Request repaint for smooth animation
-        if self.controller.is_auto_solving() || self.animation.is_some() || !self.animation_queue.is_empty() {
+        // Request repaint for smooth animation and background solver polling
+        if self.controller.is_auto_solving()
+            || self.animation.is_some()
+            || !self.animation_queue.is_empty()
+            || self.controller.is_solver_computing() {
             ctx.request_repaint();
         }
 
@@ -179,14 +188,19 @@ impl eframe::App for GuiPresenter {
                     if let Some((current, total)) = self.controller.auto_solve_progress() {
                         ui.label(format!("{}/{}", current, total));
                     }
-                } else if ui.button("Auto Solve").clicked() {
-                    self.status_message = Some("Computing solution...".to_string());
-                    ctx.request_repaint(); // Force UI update to show message
-
-                    if !self.controller.start_auto_solve() {
-                        self.status_message = Some("⚠ No solution found (puzzle too complex or iteration limit reached)".to_string());
-                    } else {
+                } else if self.controller.is_solver_computing_for_autosolve() {
+                    // Solver running in background for auto-solve
+                    if ui.button("Cancel").clicked() {
+                        self.controller.stop_auto_solve();
                         self.status_message = None;
+                    }
+                    ui.label("Computing solution...");
+                    ctx.request_repaint(); // Keep UI responsive
+                } else if ui.button("Auto Solve").clicked() {
+                    if !self.controller.start_auto_solve() {
+                        self.status_message = Some("⚠ Puzzle already solved or computation in progress".to_string());
+                    } else {
+                        self.status_message = Some("Computing solution in background...".to_string());
                     }
                 }
 
@@ -206,7 +220,7 @@ impl eframe::App for GuiPresenter {
                 let metrics = self.controller.all_entropy_metrics();
 
                 if self.show_performance {
-                    // Detailed view with performance metrics (cached - shows calc time, not frame time)
+                    // Detailed view with performance metrics
                     ui.label(format!("Manhattan: {}", metrics.manhattan_distance));
                     ui.label(format!("Heuristic: {}", metrics.shortest_path_heuristic));
 
@@ -214,6 +228,12 @@ impl eframe::App for GuiPresenter {
                         ui.label(format!(
                             "Actual: {} (calc: {})",
                             metrics.actual_solution_length,
+                            PerformanceMetrics::format_duration(metrics.performance.actual_time_micros)
+                        ));
+                    } else if metrics.performance.actual_time_micros > 0 {
+                        // Show solve time even if puzzle not yet solved
+                        ui.label(format!(
+                            "Actual: -- (last calc: {})",
                             PerformanceMetrics::format_duration(metrics.performance.actual_time_micros)
                         ));
                     } else {

@@ -4,6 +4,8 @@ use crate::model::{
     MoveValidator, PerformanceMetrics, PerformanceTimer, Position, PuzzleError, PuzzleState,
     ShortestPathHeuristic,
 };
+use std::sync::mpsc::{channel, Receiver};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 /// Combined entropy and performance metrics
@@ -39,8 +41,14 @@ impl MoveHistory {
     }
 }
 
+/// Auto-solve computation state (running in background thread)
+pub enum SolverState {
+    Computing(JoinHandle<Option<(Vec<Position>, u64)>>, Receiver<()>, bool), // handle, cancel, is_for_autosolve
+    Ready(Vec<Position>, u64), // path, solve_time_micros
+    Failed,
+}
+
 /// Auto-solve state
-#[derive(Debug)]
 pub struct AutoSolveState {
     solution_path: Vec<Position>,
     current_step: usize,
@@ -76,6 +84,9 @@ pub struct GameController {
     cached_metrics: Option<EntropyMetrics>,
     state_version: u64, // Increments on every state change
     auto_solve: Option<AutoSolveState>,
+    solver_state: Option<SolverState>,
+    last_solve_time_micros: u64, // Performance metric for last A* solve
+    last_solution_length: u32, // Actual solution length from last A* solve
 }
 
 impl GameController {
@@ -93,6 +104,9 @@ impl GameController {
             cached_metrics: None,
             state_version: 0,
             auto_solve: None,
+            solver_state: None,
+            last_solve_time_micros: 0,
+            last_solution_length: 0,
         })
     }
 
@@ -100,6 +114,11 @@ impl GameController {
     fn invalidate_cache(&mut self) {
         self.cached_metrics = None;
         self.state_version += 1;
+        // Clear solve time and length only if not auto-solving (manual moves invalidate it)
+        if !self.is_auto_solving() {
+            self.last_solve_time_micros = 0;
+            self.last_solution_length = 0;
+        }
     }
 
     /// Returns a reference to the current puzzle state
@@ -128,6 +147,37 @@ impl GameController {
             self.entropy_calculator.as_ref(),
         );
         self.invalidate_cache();
+        self.auto_solve = None;
+        self.solver_state = None;
+
+        // Start background computation for actual entropy (metrics only, not auto-solve)
+        self.start_background_solve_for_metrics();
+    }
+
+    /// Starts background solver for metrics calculation only (not auto-solve)
+    fn start_background_solve_for_metrics(&mut self) {
+        // Don't compute if already solved or already computing
+        if self.state.is_solved() || self.solver_state.is_some() {
+            return;
+        }
+
+        println!("Computing actual solution length in background...");
+
+        // Clone the state to send to the thread
+        let state = self.state.clone();
+        let (_cancel_tx, cancel_rx) = channel::<()>();
+
+        // Spawn solver in background thread
+        let handle = thread::spawn(move || {
+            let timer = PerformanceTimer::start();
+            let solver = AStarSolver::new();
+            let result = solver.solve_with_path(&state);
+            let solve_time = timer.elapsed_micros();
+
+            result.map(|path| (path, solve_time))
+        });
+
+        self.solver_state = Some(SolverState::Computing(handle, cancel_rx, false)); // false = not for auto-solve
     }
 
     /// Handles a player click at the given position
@@ -199,16 +249,21 @@ impl GameController {
         let shortest_path = ShortestPathHeuristic.calculate(&self.state);
         perf.heuristic_time_micros = timer.elapsed_micros();
 
-        // Only calculate actual solution for small puzzles or low entropy
-        // to avoid performance issues
-        let actual = if self.state.size() <= 4 && manhattan < 50 {
+        // Only calculate actual solution for trivial puzzles (very low entropy)
+        // to avoid UI hangs. For harder puzzles, use Auto-Solve button.
+        let actual = if self.state.size() <= 3 && manhattan <= 5 {
             let timer = PerformanceTimer::start();
             let result = ActualSolutionLength::new().calculate(&self.state);
             perf.actual_time_micros = timer.elapsed_micros();
             result
+        } else if self.last_solution_length > 0 {
+            // Use cached solution from background thread
+            perf.actual_time_micros = self.last_solve_time_micros;
+            self.last_solution_length
         } else {
-            perf.actual_time_micros = 0; // Not calculated
-            999 // Placeholder for "too complex to solve in real-time"
+            // Not calculated yet
+            perf.actual_time_micros = 0;
+            999 // Placeholder for "not calculated"
         };
 
         let metrics = EntropyMetrics {
@@ -231,42 +286,129 @@ impl GameController {
         self.history.reset();
         self.invalidate_cache();
         self.auto_solve = None;
+        self.solver_state = None;
     }
 
     /// Starts auto-solve mode, computing and animating the optimal solution
-    /// Returns false if puzzle is already solved or no solution found
+    /// Spawns a background thread to compute the solution (non-blocking)
+    /// Returns true if computation started, false if already solved or computing
     pub fn start_auto_solve(&mut self) -> bool {
         if self.state.is_solved() {
+            return false;
+        }
+
+        // Clear failed state from previous attempts
+        if matches!(self.solver_state, Some(SolverState::Failed)) {
+            self.solver_state = None;
+        }
+
+        // Already computing or running
+        if self.solver_state.is_some() || self.auto_solve.is_some() {
             return false;
         }
 
         println!("\n=== AUTO-SOLVE START ===");
         println!("Current puzzle state entropy (Manhattan): {}", self.current_entropy());
         println!("Move count: {}", self.move_count());
+        println!("Spawning solver thread (may take up to 60 seconds)...");
 
-        let solver = AStarSolver::new();
-        if let Some(path) = solver.solve_with_path(&self.state) {
-            println!("✓ A* calculated NEW solution path with {} moves", path.len());
-            println!("First 5 moves: {:?}", &path[..path.len().min(5)]);
+        // Clone the state to send to the thread
+        let state = self.state.clone();
 
-            self.auto_solve = Some(AutoSolveState::new(
-                path,
-                Duration::from_millis(700), // 0.7 seconds per move
-            ));
-            true
-        } else {
-            println!("✗ A* failed to find solution!");
-            false
-        }
+        // Create a channel for cancellation (unused for now, but allows future timeout)
+        let (_cancel_tx, cancel_rx) = channel::<()>();
+
+        // Spawn solver in background thread
+        let handle = thread::spawn(move || {
+            let timer = PerformanceTimer::start();
+            let solver = AStarSolver::new();
+            let result = solver.solve_with_path(&state);
+            let solve_time = timer.elapsed_micros();
+
+            result.map(|path| (path, solve_time))
+        });
+
+        self.solver_state = Some(SolverState::Computing(handle, cancel_rx, true)); // true = for auto-solve
+        true
     }
 
-    /// Stops auto-solve mode
+    /// Checks if solver thread has completed and transitions state
+    /// Should be called each frame to poll for completion
+    /// Returns true if solution is ready to start executing
+    pub fn update_solver_state(&mut self) -> bool {
+        let state = self.solver_state.take();
+
+        match state {
+            Some(SolverState::Computing(handle, _cancel_rx, is_for_autosolve)) => {
+                // Check if thread is done (non-blocking)
+                if handle.is_finished() {
+                    match handle.join() {
+                        Ok(Some((path, solve_time))) => {
+                            println!("✓ A* calculated solution path with {} moves", path.len());
+                            if is_for_autosolve {
+                                println!("First 5 moves: {:?}", &path[..path.len().min(5)]);
+                            }
+                            println!("Solve time: {}", PerformanceMetrics::format_duration(solve_time));
+
+                            // Store solve time and solution length for metrics display
+                            self.last_solve_time_micros = solve_time;
+                            self.last_solution_length = path.len() as u32;
+
+                            // Invalidate cache so GUI shows updated metrics
+                            self.cached_metrics = None;
+
+                            // Only transition to auto-solve animation if this was for auto-solve
+                            if is_for_autosolve {
+                                self.auto_solve = Some(AutoSolveState::new(
+                                    path,
+                                    Duration::from_millis(700), // 0.7 seconds per move
+                                ));
+                                return true;
+                            }
+                            // Otherwise just keep the time and length for metrics display
+                        }
+                        Ok(None) => {
+                            println!("✗ A* failed to find solution!");
+                            self.solver_state = Some(SolverState::Failed);
+                        }
+                        Err(_) => {
+                            println!("✗ Solver thread panicked!");
+                            self.solver_state = Some(SolverState::Failed);
+                        }
+                    }
+                } else {
+                    // Still computing, put it back
+                    self.solver_state = Some(SolverState::Computing(handle, _cancel_rx, is_for_autosolve));
+                }
+            }
+            Some(other) => {
+                // Put back non-computing states
+                self.solver_state = Some(other);
+            }
+            None => {}
+        }
+
+        false
+    }
+
+    /// Returns true if solver is currently computing in background
+    pub fn is_solver_computing(&self) -> bool {
+        matches!(self.solver_state, Some(SolverState::Computing(_, _, _)))
+    }
+
+    /// Returns true if solver is computing for auto-solve (not just metrics)
+    pub fn is_solver_computing_for_autosolve(&self) -> bool {
+        matches!(self.solver_state, Some(SolverState::Computing(_, _, true)))
+    }
+
+    /// Stops auto-solve mode and cancels any running solver
     pub fn stop_auto_solve(&mut self) {
         println!("\n=== AUTO-SOLVE STOPPED ===");
         if let Some(progress) = self.auto_solve_progress() {
             println!("Stopped at move {}/{}", progress.0, progress.1);
         }
         self.auto_solve = None;
+        self.solver_state = None;
     }
 
     /// Returns whether auto-solve is active
@@ -420,16 +562,24 @@ mod tests {
             controller.complete_move_sequence();
         }
 
-        // Start auto-solve
+        // Start auto-solve (spawns background thread)
         assert!(controller.start_auto_solve());
+        assert!(controller.is_solver_computing());
+
+        // Poll until solver completes (should be fast for 3x3)
+        let mut attempts = 0;
+        while !controller.update_solver_state() && attempts < 1000 {
+            std::thread::sleep(Duration::from_millis(10));
+            attempts += 1;
+        }
+
+        // Should now be auto-solving (solution ready)
         assert!(controller.is_auto_solving());
 
         // Get expected path length
         let (_, total_steps) = controller.auto_solve_progress().unwrap();
 
         // Force immediate execution by manipulating time
-        // In real usage, update_auto_solve would be called every frame
-        // and time would naturally pass
         if let Some(ref mut auto_solve) = controller.auto_solve {
             auto_solve.move_interval = Duration::from_millis(0); // Instant moves for testing
         }
