@@ -23,3 +23,11 @@ harness = false
 [[bench]]
 name = "large_puzzle_test"
 harness = false
+
+[[bench]]
+name = "relative_pattern_benchmark"
+harness = false
+
+[[bench]]
+name = "hash_pattern_benchmark"
+harness = false

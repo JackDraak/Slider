@@ -1,7 +1,9 @@
 use super::entropy::{EntropyCalculator, ShortestPathHeuristic};
 use super::move_validator::{MoveValidator, Position};
 use super::pattern_catalog::PatternCatalog;
+use super::pattern_hash::PatternHashTable;
 use super::puzzle_state::PuzzleState;
+use super::relative_pattern::RelativePatternCatalog;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
@@ -53,26 +55,60 @@ pub struct AStarSolver {
     heuristic: ShortestPathHeuristic,
     max_iterations: usize,
     use_patterns: bool, // Enable/disable pattern-based optimization
-    pattern_catalog: Option<PatternCatalog>,
+    pattern_catalog: Option<PatternCatalog>,  // Old absolute-position patterns
+    relative_patterns: Option<RelativePatternCatalog>,  // Tile-agnostic patterns (slow)
+    pattern_hash: Option<PatternHashTable>,  // Fast hash-table based patterns
 }
 
 impl AStarSolver {
     pub fn new() -> Self {
         Self {
             heuristic: ShortestPathHeuristic,
-            max_iterations: 2_000_000, // Very generous limit - should handle all 4×4 puzzles
-            use_patterns: false, // Disabled by default for now
+            max_iterations: 2_000_000,
+            use_patterns: false,
             pattern_catalog: None,
+            relative_patterns: None,
+            pattern_hash: None,
         }
     }
 
-    /// Creates a solver with pattern-based optimization enabled
+    /// Creates a solver with old absolute-position patterns (experimental)
     pub fn with_patterns(grid_size: usize) -> Self {
         Self {
             heuristic: ShortestPathHeuristic,
             max_iterations: 2_000_000,
             use_patterns: true,
             pattern_catalog: Some(PatternCatalog::new(grid_size)),
+            relative_patterns: None,
+            pattern_hash: None,
+        }
+    }
+
+    /// Creates a solver with tile-agnostic relative patterns (slow iteration)
+    pub fn with_relative_patterns() -> Self {
+        Self {
+            heuristic: ShortestPathHeuristic,
+            max_iterations: 2_000_000,
+            use_patterns: true,
+            pattern_catalog: None,
+            relative_patterns: Some(RelativePatternCatalog::new()),
+            pattern_hash: None,
+        }
+    }
+
+    /// Creates a solver with FAST hash-table based tile-agnostic patterns
+    pub fn with_pattern_hash() -> Self {
+        let catalog = RelativePatternCatalog::new();
+        let patterns = catalog.patterns().to_vec();
+        let hash_table = PatternHashTable::from_patterns(patterns);
+
+        Self {
+            heuristic: ShortestPathHeuristic,
+            max_iterations: 2_000_000,
+            use_patterns: true,
+            pattern_catalog: None,
+            relative_patterns: None,
+            pattern_hash: Some(hash_table),
         }
     }
 
@@ -147,8 +183,117 @@ impl AStarSolver {
                 );
             }
 
-            // Pattern-based exploration: try multi-move patterns
+            // FAST hash-table based pattern exploration
             if self.use_patterns {
+                if let Some(ref hash_table) = self.pattern_hash {
+                    // O(1) lookup instead of O(patterns × 8)!
+                    for pattern_match in hash_table.match_at(&node_storage[current_idx].state, empty_pos) {
+                        let mut pattern_state = node_storage[current_idx].state.clone();
+                        let mut pattern_valid = true;
+
+                        for &move_pos in &pattern_match.moves {
+                            if !pattern_state.apply_immediate_move(move_pos) {
+                                pattern_valid = false;
+                                break;
+                            }
+                        }
+
+                        if pattern_valid {
+                            let pattern_hash = self.state_hash(&pattern_state);
+
+                            if closed_set.contains(&pattern_hash) {
+                                continue;
+                            }
+
+                            let tentative_g = node_storage[current_idx].g_score + pattern_match.cost;
+
+                            if let Some(&best_g) = best_g_scores.get(&pattern_hash) {
+                                if tentative_g >= best_g {
+                                    continue;
+                                }
+                            }
+
+                            best_g_scores.insert(pattern_hash, tentative_g);
+
+                            let h_score = self.heuristic.calculate(&pattern_state);
+                            let pattern_node = SearchNode {
+                                state: pattern_state,
+                                g_score: tentative_g,
+                                h_score,
+                                parent_index: Some(current_idx),
+                                moves_from_parent: pattern_match.moves,
+                            };
+
+                            let f_score = pattern_node.f_score();
+                            let g_score = pattern_node.g_score;
+                            let next_idx = node_storage.len();
+                            node_storage.push(pattern_node);
+                            open_set.push(HeapEntry {
+                                f_score,
+                                g_score,
+                                node_index: next_idx,
+                            });
+                        }
+                    }
+                }
+
+                // Tile-agnostic relative pattern exploration (slow - for comparison)
+                if let Some(ref relative_catalog) = self.relative_patterns {
+                    for pattern in relative_catalog.patterns() {
+                        // Try to match pattern at current empty position
+                        if let Some(moves) = pattern.match_at(&node_storage[current_idx].state, empty_pos) {
+                            // Pattern matches! Apply the moves
+                            let mut pattern_state = node_storage[current_idx].state.clone();
+                            let mut pattern_valid = true;
+
+                            for &move_pos in &moves {
+                                if !pattern_state.apply_immediate_move(move_pos) {
+                                    pattern_valid = false;
+                                    break;
+                                }
+                            }
+
+                            if pattern_valid {
+                                let pattern_hash = self.state_hash(&pattern_state);
+
+                                if closed_set.contains(&pattern_hash) {
+                                    continue;
+                                }
+
+                                let tentative_g = node_storage[current_idx].g_score + pattern.cost;
+
+                                if let Some(&best_g) = best_g_scores.get(&pattern_hash) {
+                                    if tentative_g >= best_g {
+                                        continue;
+                                    }
+                                }
+
+                                best_g_scores.insert(pattern_hash, tentative_g);
+
+                                let h_score = self.heuristic.calculate(&pattern_state);
+                                let pattern_node = SearchNode {
+                                    state: pattern_state,
+                                    g_score: tentative_g,
+                                    h_score,
+                                    parent_index: Some(current_idx),
+                                    moves_from_parent: moves,
+                                };
+
+                                let f_score = pattern_node.f_score();
+                                let g_score = pattern_node.g_score;
+                                let next_idx = node_storage.len();
+                                node_storage.push(pattern_node);
+                                open_set.push(HeapEntry {
+                                    f_score,
+                                    g_score,
+                                    node_index: next_idx,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Old absolute-position pattern exploration (for comparison)
                 if let Some(ref catalog) = self.pattern_catalog {
                     for pattern in catalog.patterns() {
                         // Try applying the entire pattern sequence
@@ -377,6 +522,45 @@ mod tests {
 
         let solver_patterns = AStarSolver::with_patterns(3);
         let path = solver_patterns.solve_with_path(&puzzle).unwrap();
+
+        // Verify the path actually solves the puzzle
+        let mut test_state = puzzle.clone();
+        for move_pos in path {
+            assert!(test_state.apply_immediate_move(move_pos),
+                "Path contains invalid move: {:?}", move_pos);
+        }
+        assert!(test_state.is_solved(), "Path does not lead to solved state");
+    }
+
+    #[test]
+    fn test_relative_pattern_solver_finds_optimal_solution() {
+        // Create a simple puzzle
+        let mut puzzle = PuzzleState::new(3).unwrap();
+        puzzle.apply_immediate_move((2, 1));
+        puzzle.apply_immediate_move((1, 1));
+        puzzle.apply_immediate_move((0, 1));
+
+        // Solve with both normal and relative pattern solvers
+        let solver_normal = AStarSolver::new();
+        let solver_relative = AStarSolver::with_relative_patterns();
+
+        let solution_normal = solver_normal.solve(&puzzle);
+        let solution_relative = solver_relative.solve(&puzzle);
+
+        // Both should find the same optimal solution length
+        assert_eq!(solution_normal, solution_relative);
+        assert_eq!(solution_normal, Some(3));
+    }
+
+    #[test]
+    fn test_relative_pattern_solver_path_correctness() {
+        // Create a simple puzzle and solve with relative patterns
+        let mut puzzle = PuzzleState::new(4).unwrap();
+        puzzle.apply_immediate_move((3, 2));
+        puzzle.apply_immediate_move((2, 2));
+
+        let solver_relative = AStarSolver::with_relative_patterns();
+        let path = solver_relative.solve_with_path(&puzzle).unwrap();
 
         // Verify the path actually solves the puzzle
         let mut test_state = puzzle.clone();
