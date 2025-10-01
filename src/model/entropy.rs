@@ -105,7 +105,7 @@ fn count_linear_conflicts(state: &PuzzleState) -> u32 {
 }
 
 /// Difficulty levels based on entropy thresholds
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Difficulty {
     Easy,
     Medium,

@@ -5,7 +5,7 @@ use std::fmt;
 pub enum PuzzleError {
     /// Grid size is below minimum (3)
     SizeTooSmall { size: usize, min: usize },
-    /// Grid size is above maximum (15)
+    /// Grid size is above maximum (22)
     SizeTooLarge { size: usize, max: usize },
     /// Invalid move attempted
     InvalidMove { position: (usize, usize) },
@@ -114,21 +114,21 @@ mod tests {
             "Puzzle size 2 is too small (minimum: 3)"
         );
 
-        let err = PuzzleError::SizeTooLarge { size: 16, max: 15 };
+        let err = PuzzleError::SizeTooLarge { size: 23, max: 22 };
         assert_eq!(
             err.to_string(),
-            "Puzzle size 16 is too large (maximum: 15)"
+            "Puzzle size 23 is too large (maximum: 22)"
         );
     }
 
     #[test]
     fn test_solver_error_display() {
         let err = SolverError::TimeoutExceeded {
-            max_iterations: 100_000,
+            max_iterations: 500_000,
         };
         assert_eq!(
             err.to_string(),
-            "Solver timeout: exceeded 100000 iterations"
+            "Solver timeout: exceeded 500000 iterations"
         );
     }
 

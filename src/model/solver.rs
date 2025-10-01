@@ -1,4 +1,5 @@
 use super::entropy::{EntropyCalculator, ShortestPathHeuristic};
+use super::empty_cell_path::EmptyCellPathHeuristic;
 use super::move_validator::{MoveValidator, Position};
 use super::pattern_catalog::PatternCatalog;
 use super::pattern_hash::PatternHashTable;
@@ -52,12 +53,20 @@ impl PartialOrd for HeapEntry {
 
 /// A* solver that finds the optimal solution path
 pub struct AStarSolver {
-    heuristic: ShortestPathHeuristic,
+    heuristic: ShortestPathHeuristic, // TODO: Make generic in future
     max_iterations: usize,
     use_patterns: bool, // Enable/disable pattern-based optimization
     pattern_catalog: Option<PatternCatalog>,  // Old absolute-position patterns
     relative_patterns: Option<RelativePatternCatalog>,  // Tile-agnostic patterns (slow)
     pattern_hash: Option<PatternHashTable>,  // Fast hash-table based patterns
+}
+
+/// A* solver with Empty Cell Path heuristic for better performance on complex puzzles
+pub struct AStarSolverEmptyCell {
+    heuristic: EmptyCellPathHeuristic,
+    max_iterations: usize,
+    use_patterns: bool,
+    pattern_hash: Option<PatternHashTable>,
 }
 
 impl AStarSolver {
@@ -451,6 +460,260 @@ impl AStarSolver {
 }
 
 impl Default for AStarSolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AStarSolverEmptyCell {
+    /// Creates a new solver with Empty Cell Path heuristic
+    pub fn new() -> Self {
+        Self {
+            heuristic: EmptyCellPathHeuristic::new(),
+            max_iterations: 500_000,
+            use_patterns: false,
+            pattern_hash: None,
+        }
+    }
+
+    /// Creates a solver with Empty Cell Path heuristic and pattern optimization
+    pub fn with_patterns() -> Self {
+        let catalog = RelativePatternCatalog::new();
+        let patterns = catalog.patterns().to_vec();
+        let hash_table = PatternHashTable::from_patterns(patterns);
+
+        Self {
+            heuristic: EmptyCellPathHeuristic::new(),
+            max_iterations: 500_000,
+            use_patterns: true,
+            pattern_hash: Some(hash_table),
+        }
+    }
+
+    /// Returns the length of the optimal solution, or None if unsolvable/timeout
+    pub fn solve(&self, initial_state: &PuzzleState) -> Option<u32> {
+        self.solve_with_path(initial_state).map(|path| path.len() as u32)
+    }
+
+    /// Returns the optimal solution path as a sequence of tile positions to move
+    /// Returns None if unsolvable or timeout
+    pub fn solve_with_path(&self, initial_state: &PuzzleState) -> Option<Vec<Position>> {
+        if initial_state.is_solved() {
+            return Some(Vec::new());
+        }
+
+        let mut open_set = BinaryHeap::new();
+        let mut closed_set = HashSet::new();
+        let mut best_g_scores: HashMap<u64, u32> = HashMap::new();
+        let mut node_storage: Vec<SearchNode> = Vec::new();
+
+        let initial_node = SearchNode {
+            state: initial_state.clone(),
+            g_score: 0,
+            h_score: self.heuristic.calculate(initial_state),
+            parent_index: None,
+            moves_from_parent: Vec::new(),
+        };
+
+        let initial_f_score = initial_node.f_score();
+        let initial_g_score = initial_node.g_score;
+        node_storage.push(initial_node);
+        open_set.push(HeapEntry {
+            f_score: initial_f_score,
+            g_score: initial_g_score,
+            node_index: 0,
+        });
+        best_g_scores.insert(self.state_hash(initial_state), 0);
+
+        // Size is guaranteed valid since initial_state was constructed successfully
+        let validator = MoveValidator::new(initial_state.size()).expect("valid size");
+        let mut iterations = 0;
+
+        while let Some(HeapEntry { node_index: current_idx, .. }) = open_set.pop() {
+            iterations += 1;
+            if iterations > self.max_iterations {
+                return None; // Timeout
+            }
+
+            let current = &node_storage[current_idx];
+
+            if current.state.is_solved() {
+                return Some(self.reconstruct_path(&node_storage, current_idx));
+            }
+
+            let current_hash = self.state_hash(&current.state);
+            if closed_set.contains(&current_hash) {
+                continue;
+            }
+            closed_set.insert(current_hash);
+
+            // Explore all immediate moves (no chain moves for solver)
+            let empty_pos = current.state.empty_position();
+            for next_pos in validator.get_immediate_moves(empty_pos) {
+                self.explore_successor(
+                    current_idx,
+                    next_pos,
+                    1, // Single move cost
+                    &mut node_storage,
+                    &mut open_set,
+                    &mut closed_set,
+                    &mut best_g_scores,
+                );
+            }
+
+            // Pattern exploration if enabled
+            if self.use_patterns {
+                if let Some(ref hash_table) = self.pattern_hash {
+                    for pattern_match in hash_table.match_at(&node_storage[current_idx].state, empty_pos) {
+                        let mut pattern_state = node_storage[current_idx].state.clone();
+                        let mut pattern_valid = true;
+
+                        for &move_pos in &pattern_match.moves {
+                            if !pattern_state.apply_immediate_move(move_pos) {
+                                pattern_valid = false;
+                                break;
+                            }
+                        }
+
+                        if pattern_valid {
+                            let pattern_hash = self.state_hash(&pattern_state);
+
+                            if closed_set.contains(&pattern_hash) {
+                                continue;
+                            }
+
+                            let tentative_g = node_storage[current_idx].g_score + pattern_match.cost;
+
+                            if let Some(&best_g) = best_g_scores.get(&pattern_hash) {
+                                if tentative_g >= best_g {
+                                    continue;
+                                }
+                            }
+
+                            best_g_scores.insert(pattern_hash, tentative_g);
+
+                            let h_score = self.heuristic.calculate(&pattern_state);
+                            let pattern_node = SearchNode {
+                                state: pattern_state,
+                                g_score: tentative_g,
+                                h_score,
+                                parent_index: Some(current_idx),
+                                moves_from_parent: pattern_match.moves,
+                            };
+
+                            let f_score = pattern_node.f_score();
+                            let g_score = pattern_node.g_score;
+                            let next_idx = node_storage.len();
+                            node_storage.push(pattern_node);
+                            open_set.push(HeapEntry {
+                                f_score,
+                                g_score,
+                                node_index: next_idx,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        None // No solution found
+    }
+
+    /// Helper to explore a successor state (extracted for code reuse)
+    fn explore_successor(
+        &self,
+        current_idx: usize,
+        move_pos: Position,
+        move_cost: u32,
+        node_storage: &mut Vec<SearchNode>,
+        open_set: &mut BinaryHeap<HeapEntry>,
+        closed_set: &HashSet<u64>,
+        best_g_scores: &mut HashMap<u64, u32>,
+    ) {
+        let mut next_state = node_storage[current_idx].state.clone();
+        if !next_state.apply_immediate_move(move_pos) {
+            return;
+        }
+
+        let tentative_g = node_storage[current_idx].g_score + move_cost;
+        let next_hash = self.state_hash(&next_state);
+
+        // Skip if this state is already in closed set (fully explored)
+        if closed_set.contains(&next_hash) {
+            return;
+        }
+
+        // Skip if we've found a better path to this state
+        if let Some(&best_g) = best_g_scores.get(&next_hash) {
+            if tentative_g >= best_g {
+                return;
+            }
+        }
+
+        best_g_scores.insert(next_hash, tentative_g);
+
+        let h_score = self.heuristic.calculate(&next_state);
+        let next_node = SearchNode {
+            state: next_state,
+            g_score: tentative_g,
+            h_score,
+            parent_index: Some(current_idx),
+            moves_from_parent: vec![move_pos],
+        };
+
+        let f_score = next_node.f_score();
+        let g_score = next_node.g_score;
+        let next_idx = node_storage.len();
+        node_storage.push(next_node);
+        open_set.push(HeapEntry {
+            f_score,
+            g_score,
+            node_index: next_idx,
+        });
+    }
+
+    /// Reconstructs the solution path by following parent indices
+    fn reconstruct_path(&self, node_storage: &[SearchNode], goal_idx: usize) -> Vec<Position> {
+        let mut path = Vec::new();
+        let mut current_idx = goal_idx;
+
+        // Walk backwards from goal to start, collecting move sequences
+        while let Some(parent_idx) = node_storage[current_idx].parent_index {
+            // Add all moves from this edge (could be single move or pattern sequence)
+            for &move_pos in node_storage[current_idx].moves_from_parent.iter().rev() {
+                path.push(move_pos);
+            }
+            current_idx = parent_idx;
+        }
+
+        // Reverse to get path from start to goal
+        path.reverse();
+        path
+    }
+
+    /// Creates a hash representation of the puzzle state for deduplication
+    fn state_hash(&self, state: &PuzzleState) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        let size = state.size();
+
+        for row in 0..size {
+            for col in 0..size {
+                if let Some(tile) = state.tile_at((row, col)) {
+                    if let Some(num) = tile.numeric_value() {
+                        num.hash(&mut hasher);
+                    }
+                } else {
+                    // Use a special value for empty cell
+                    u32::MAX.hash(&mut hasher);
+                }
+            }
+        }
+
+        hasher.finish()
+    }
+}
+
+impl Default for AStarSolverEmptyCell {
     fn default() -> Self {
         Self::new()
     }

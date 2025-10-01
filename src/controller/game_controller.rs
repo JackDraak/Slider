@@ -1,4 +1,4 @@
-use crate::controller::shuffle_controller::ShuffleController;
+use crate::controller::shuffle_controller::{ShuffleController, ShuffleResult};
 use crate::model::{
     AStarSolver, ActualSolutionLength, Difficulty, EntropyCalculator, ManhattanDistance,
     MoveValidator, PerformanceMetrics, PerformanceTimer, Position, PuzzleError, PuzzleState,
@@ -87,6 +87,7 @@ pub struct GameController {
     solver_state: Option<SolverState>,
     last_solve_time_micros: u64, // Performance metric for last A* solve
     last_solution_length: u32, // Actual solution length from last A* solve
+    last_shuffle_result: Option<ShuffleResult>, // Track shuffle information
 }
 
 impl GameController {
@@ -107,6 +108,7 @@ impl GameController {
             solver_state: None,
             last_solve_time_micros: 0,
             last_solution_length: 0,
+            last_shuffle_result: None,
         })
     }
 
@@ -131,6 +133,11 @@ impl GameController {
         self.history.move_count()
     }
 
+    /// Returns information about the last shuffle operation
+    pub fn last_shuffle_result(&self) -> Option<&ShuffleResult> {
+        self.last_shuffle_result.as_ref()
+    }
+
     /// Sets the entropy calculator to use
     pub fn set_entropy_calculator(&mut self, calculator: Box<dyn EntropyCalculator>) {
         self.entropy_calculator = calculator;
@@ -141,11 +148,15 @@ impl GameController {
         // Size is guaranteed valid since controller was constructed successfully
         self.state = PuzzleState::new(self.state.size()).expect("valid size");
         self.history.reset();
-        self.shuffle_controller.shuffle(
+        
+        // Use shuffle_with_result to track shuffle information
+        let shuffle_result = self.shuffle_controller.shuffle_with_result(
             &mut self.state,
             difficulty,
             self.entropy_calculator.as_ref(),
         );
+        
+        self.last_shuffle_result = Some(shuffle_result);
         self.invalidate_cache();
         self.auto_solve = None;
         self.solver_state = None;

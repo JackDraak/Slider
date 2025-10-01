@@ -4,6 +4,14 @@ use crate::model::{
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
+/// Result of a shuffle operation
+#[derive(Debug, Clone)]
+pub struct ShuffleResult {
+    pub moves_made: usize,
+    pub final_entropy: u32,
+    pub target_met: bool,
+}
+
 /// Controls puzzle shuffling with entropy requirements
 pub struct ShuffleController {
     validator: MoveValidator,
@@ -30,13 +38,23 @@ impl ShuffleController {
         difficulty: Difficulty,
         calculator: &dyn EntropyCalculator,
     ) {
+        let _result = self.shuffle_with_result(state, difficulty, calculator);
+    }
+
+    /// Shuffles the puzzle and returns detailed results about the operation
+    pub fn shuffle_with_result(
+        &self,
+        state: &mut PuzzleState,
+        difficulty: Difficulty,
+        calculator: &dyn EntropyCalculator,
+    ) -> ShuffleResult {
         let target_entropy = difficulty.min_entropy(state.size());
         let mut rng = thread_rng();
         let mut previous_empty: Option<Position> = None;
         let max_attempts = 1000;
-        let mut attempts = 0;
+        let mut moves_made = 0;
 
-        while calculator.calculate(state) < target_entropy && attempts < max_attempts {
+        while calculator.calculate(state) < target_entropy && moves_made < max_attempts {
             let current_empty = state.empty_position();
             let mut moves = self.validator.get_immediate_moves(current_empty);
 
@@ -55,7 +73,16 @@ impl ShuffleController {
             previous_empty = Some(current_empty);
 
             state.apply_immediate_move(*chosen_move);
-            attempts += 1;
+            moves_made += 1;
+        }
+
+        let final_entropy = calculator.calculate(state);
+        let target_met = final_entropy >= target_entropy;
+
+        ShuffleResult {
+            moves_made,
+            final_entropy,
+            target_met,
         }
     }
 
