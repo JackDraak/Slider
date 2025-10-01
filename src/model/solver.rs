@@ -1,5 +1,6 @@
 use super::entropy::{EntropyCalculator, ShortestPathHeuristic};
 use super::move_validator::{MoveValidator, Position};
+use super::pattern_catalog::PatternCatalog;
 use super::puzzle_state::PuzzleState;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -13,7 +14,7 @@ struct SearchNode {
     g_score: u32, // Cost from start (moves taken)
     h_score: u32, // Heuristic estimate to goal
     parent_index: Option<usize>, // Index into node storage vector
-    move_from_parent: Option<Position>, // The move that led to this state
+    moves_from_parent: Vec<Position>, // Move sequence that led to this state (single or pattern)
 }
 
 impl SearchNode {
@@ -51,6 +52,8 @@ impl PartialOrd for HeapEntry {
 pub struct AStarSolver {
     heuristic: ShortestPathHeuristic,
     max_iterations: usize,
+    use_patterns: bool, // Enable/disable pattern-based optimization
+    pattern_catalog: Option<PatternCatalog>,
 }
 
 impl AStarSolver {
@@ -58,6 +61,18 @@ impl AStarSolver {
         Self {
             heuristic: ShortestPathHeuristic,
             max_iterations: 2_000_000, // Very generous limit - should handle all 4×4 puzzles
+            use_patterns: false, // Disabled by default for now
+            pattern_catalog: None,
+        }
+    }
+
+    /// Creates a solver with pattern-based optimization enabled
+    pub fn with_patterns(grid_size: usize) -> Self {
+        Self {
+            heuristic: ShortestPathHeuristic,
+            max_iterations: 2_000_000,
+            use_patterns: true,
+            pattern_catalog: Some(PatternCatalog::new(grid_size)),
         }
     }
 
@@ -83,7 +98,7 @@ impl AStarSolver {
             g_score: 0,
             h_score: self.heuristic.calculate(initial_state),
             parent_index: None,
-            move_from_parent: None,
+            moves_from_parent: Vec::new(),
         };
 
         let initial_f_score = initial_node.f_score();
@@ -121,50 +136,132 @@ impl AStarSolver {
             // Explore all immediate moves (no chain moves for solver)
             let empty_pos = current.state.empty_position();
             for next_pos in validator.get_immediate_moves(empty_pos) {
-                let mut next_state = node_storage[current_idx].state.clone();
-                if !next_state.apply_immediate_move(next_pos) {
-                    continue;
-                }
+                self.explore_successor(
+                    current_idx,
+                    next_pos,
+                    1, // Single move cost
+                    &mut node_storage,
+                    &mut open_set,
+                    &mut closed_set,
+                    &mut best_g_scores,
+                );
+            }
 
-                let tentative_g = node_storage[current_idx].g_score + 1;
-                let next_hash = self.state_hash(&next_state);
+            // Pattern-based exploration: try multi-move patterns
+            if self.use_patterns {
+                if let Some(ref catalog) = self.pattern_catalog {
+                    for pattern in catalog.patterns() {
+                        // Try applying the entire pattern sequence
+                        let mut pattern_state = node_storage[current_idx].state.clone();
+                        let mut pattern_valid = true;
 
-                // Skip if this state is already in closed set (fully explored)
-                if closed_set.contains(&next_hash) {
-                    continue;
-                }
+                        // Apply all moves in the pattern
+                        for &move_pos in &pattern.moves {
+                            if !pattern_state.apply_immediate_move(move_pos) {
+                                pattern_valid = false;
+                                break;
+                            }
+                        }
 
-                // Skip if we've found a better path to this state
-                if let Some(&best_g) = best_g_scores.get(&next_hash) {
-                    if tentative_g >= best_g {
-                        continue;
+                        if pattern_valid {
+                            // Pattern successfully applied - add resulting state to open set
+                            let pattern_hash = self.state_hash(&pattern_state);
+
+                            // Skip if already explored
+                            if closed_set.contains(&pattern_hash) {
+                                continue;
+                            }
+
+                            let tentative_g = node_storage[current_idx].g_score + pattern.cost;
+
+                            // Skip if we've found a better path to this state
+                            if let Some(&best_g) = best_g_scores.get(&pattern_hash) {
+                                if tentative_g >= best_g {
+                                    continue;
+                                }
+                            }
+
+                            best_g_scores.insert(pattern_hash, tentative_g);
+
+                            let h_score = self.heuristic.calculate(&pattern_state);
+                            let pattern_node = SearchNode {
+                                state: pattern_state,
+                                g_score: tentative_g,
+                                h_score,
+                                parent_index: Some(current_idx),
+                                // Store entire pattern sequence for path reconstruction
+                                moves_from_parent: pattern.moves.clone(),
+                            };
+
+                            let f_score = pattern_node.f_score();
+                            let g_score = pattern_node.g_score;
+                            let next_idx = node_storage.len();
+                            node_storage.push(pattern_node);
+                            open_set.push(HeapEntry {
+                                f_score,
+                                g_score,
+                                node_index: next_idx,
+                            });
+                        }
                     }
                 }
-
-                best_g_scores.insert(next_hash, tentative_g);
-
-                let h_score = self.heuristic.calculate(&next_state);
-                let next_node = SearchNode {
-                    state: next_state,
-                    g_score: tentative_g,
-                    h_score,
-                    parent_index: Some(current_idx),
-                    move_from_parent: Some(next_pos),
-                };
-
-                let f_score = next_node.f_score();
-                let g_score = next_node.g_score;
-                let next_idx = node_storage.len();
-                node_storage.push(next_node);
-                open_set.push(HeapEntry {
-                    f_score,
-                    g_score,
-                    node_index: next_idx,
-                });
             }
         }
 
         None // No solution found
+    }
+
+    /// Helper to explore a successor state (extracted for code reuse)
+    fn explore_successor(
+        &self,
+        current_idx: usize,
+        move_pos: Position,
+        move_cost: u32,
+        node_storage: &mut Vec<SearchNode>,
+        open_set: &mut BinaryHeap<HeapEntry>,
+        closed_set: &HashSet<u64>,
+        best_g_scores: &mut HashMap<u64, u32>,
+    ) {
+        let mut next_state = node_storage[current_idx].state.clone();
+        if !next_state.apply_immediate_move(move_pos) {
+            return;
+        }
+
+        let tentative_g = node_storage[current_idx].g_score + move_cost;
+        let next_hash = self.state_hash(&next_state);
+
+        // Skip if this state is already in closed set (fully explored)
+        if closed_set.contains(&next_hash) {
+            return;
+        }
+
+        // Skip if we've found a better path to this state
+        if let Some(&best_g) = best_g_scores.get(&next_hash) {
+            if tentative_g >= best_g {
+                return;
+            }
+        }
+
+        best_g_scores.insert(next_hash, tentative_g);
+
+        let h_score = self.heuristic.calculate(&next_state);
+        let next_node = SearchNode {
+            state: next_state,
+            g_score: tentative_g,
+            h_score,
+            parent_index: Some(current_idx),
+            moves_from_parent: vec![move_pos],
+        };
+
+        let f_score = next_node.f_score();
+        let g_score = next_node.g_score;
+        let next_idx = node_storage.len();
+        node_storage.push(next_node);
+        open_set.push(HeapEntry {
+            f_score,
+            g_score,
+            node_index: next_idx,
+        });
     }
 
     /// Reconstructs the solution path by following parent indices
@@ -172,9 +269,10 @@ impl AStarSolver {
         let mut path = Vec::new();
         let mut current_idx = goal_idx;
 
-        // Walk backwards from goal to start, collecting moves
+        // Walk backwards from goal to start, collecting move sequences
         while let Some(parent_idx) = node_storage[current_idx].parent_index {
-            if let Some(move_pos) = node_storage[current_idx].move_from_parent {
+            // Add all moves from this edge (could be single move or pattern sequence)
+            for &move_pos in node_storage[current_idx].moves_from_parent.iter().rev() {
                 path.push(move_pos);
             }
             current_idx = parent_idx;
@@ -249,6 +347,44 @@ mod tests {
 
         let solution = solver.solve(&puzzle);
         assert_eq!(solution, Some(0));
+    }
+
+    #[test]
+    fn test_pattern_solver_finds_optimal_solution() {
+        // Create a simple puzzle
+        let mut puzzle = PuzzleState::new(3).unwrap();
+        puzzle.apply_immediate_move((2, 1));
+        puzzle.apply_immediate_move((1, 1));
+        puzzle.apply_immediate_move((0, 1));
+
+        // Solve with both solvers
+        let solver_normal = AStarSolver::new();
+        let solver_patterns = AStarSolver::with_patterns(3);
+
+        let solution_normal = solver_normal.solve(&puzzle);
+        let solution_patterns = solver_patterns.solve(&puzzle);
+
+        // Both should find the same optimal solution length
+        assert_eq!(solution_normal, solution_patterns);
+        assert_eq!(solution_normal, Some(3));
+    }
+
+    #[test]
+    fn test_pattern_solver_path_correctness() {
+        // Create a simple puzzle and solve with patterns
+        let mut puzzle = PuzzleState::new(3).unwrap();
+        puzzle.apply_immediate_move((2, 1));
+
+        let solver_patterns = AStarSolver::with_patterns(3);
+        let path = solver_patterns.solve_with_path(&puzzle).unwrap();
+
+        // Verify the path actually solves the puzzle
+        let mut test_state = puzzle.clone();
+        for move_pos in path {
+            assert!(test_state.apply_immediate_move(move_pos),
+                "Path contains invalid move: {:?}", move_pos);
+        }
+        assert!(test_state.is_solved(), "Path does not lead to solved state");
     }
 
     #[test]

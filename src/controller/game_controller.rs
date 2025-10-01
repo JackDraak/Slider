@@ -389,7 +389,9 @@ mod tests {
 
         // Execute all moves
         for _ in 0..=total_steps {
-            controller.update_auto_solve();
+            if let Some(next_move) = controller.get_next_auto_solve_move() {
+                controller.apply_auto_solve_move(next_move);
+            }
         }
 
         // Should be solved

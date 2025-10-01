@@ -15,3 +15,11 @@ eframe = "0.30"
 rand = "0.8"
 
 [dev-dependencies]
+
+[[bench]]
+name = "pattern_benchmark"
+harness = false
+
+[[bench]]
+name = "large_puzzle_test"
+harness = false
