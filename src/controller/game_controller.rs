@@ -133,30 +133,39 @@ impl GameController {
     /// Handles a player click at the given position
     /// Returns the sequence of immediate moves if valid (for animation)
     /// Returns None if invalid click or no move possible
+    /// NOTE: Does NOT apply the moves - presenter must apply them during animation
     pub fn handle_click(&mut self, pos: Position) -> Option<Vec<Position>> {
         // Check if there's a tile at the clicked position
         if self.state.tile_at(pos).is_none() {
             return None;
         }
 
+        // Can't make manual moves during auto-solve
+        if self.is_auto_solving() {
+            return None;
+        }
+
         // Get the chain move sequence (if valid)
         let validator = MoveValidator::new(self.state.size()).expect("valid size");
         if let Some(moves) = validator.resolve_chain_move(pos, self.state.empty_position()) {
-            // Apply all moves
-            for &move_pos in &moves {
-                if !self.state.apply_immediate_move(move_pos) {
-                    return None; // Something went wrong
-                }
-            }
-
-            println!("→ Manual move to {:?} ({} tiles moved, total moves: {})",
-                pos, moves.len(), self.move_count() + 1);
-            self.history.record_move();
-            self.invalidate_cache();
+            // Return the sequence WITHOUT applying - presenter will apply during animation
+            println!("→ Manual move to {:?} ({} tiles will move)", pos, moves.len());
             Some(moves)
         } else {
             None
         }
+    }
+
+    /// Applies a single immediate move (called by presenter after animation)
+    pub fn apply_move(&mut self, pos: Position) -> bool {
+        self.state.apply_immediate_move(pos)
+    }
+
+    /// Completes a move sequence (called after all animations done)
+    pub fn complete_move_sequence(&mut self) {
+        self.history.record_move();
+        self.invalidate_cache();
+        println!("  Move complete (total moves: {})", self.move_count());
     }
 
     /// Checks if the puzzle is solved
@@ -342,6 +351,15 @@ mod tests {
         let result = controller.handle_click((3, 2));
 
         assert!(result.is_some());
+
+        // Apply the moves (simulating what presenter does after animation)
+        if let Some(moves) = result {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
+
         assert_eq!(controller.move_count(), 1);
         assert!(!controller.is_solved());
     }
@@ -352,7 +370,15 @@ mod tests {
         let result = controller.handle_click((3, 0));
 
         assert!(result.is_some());
-        assert_eq!(result.unwrap().len(), 3); // Chain of 3 moves
+        let moves = result.unwrap();
+        assert_eq!(moves.len(), 3); // Chain of 3 moves
+
+        // Apply the moves (simulating what presenter does after animation)
+        for move_pos in moves {
+            controller.apply_move(move_pos);
+        }
+        controller.complete_move_sequence();
+
         assert_eq!(controller.move_count(), 1); // Counts as one move
         assert_eq!(controller.state().empty_position(), (3, 0));
     }
@@ -381,8 +407,18 @@ mod tests {
         let mut controller = GameController::new(3).unwrap();
 
         // Make a few moves to scramble
-        controller.handle_click((2, 1));
-        controller.handle_click((2, 0));
+        if let Some(moves) = controller.handle_click((2, 1)) {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
+        if let Some(moves) = controller.handle_click((2, 0)) {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
 
         // Start auto-solve
         assert!(controller.start_auto_solve());
@@ -422,8 +458,20 @@ mod tests {
     #[test]
     fn test_reset() {
         let mut controller = GameController::new(4).unwrap();
-        controller.handle_click((3, 2));
-        controller.handle_click((2, 2));
+
+        // Make moves
+        if let Some(moves) = controller.handle_click((3, 2)) {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
+        if let Some(moves) = controller.handle_click((2, 2)) {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
 
         assert_eq!(controller.move_count(), 2);
 
@@ -438,7 +486,14 @@ mod tests {
         let mut controller = GameController::new(4).unwrap();
         assert_eq!(controller.current_entropy(), 0);
 
-        controller.handle_click((3, 2));
+        // Make a move
+        if let Some(moves) = controller.handle_click((3, 2)) {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
+
         assert!(controller.current_entropy() > 0);
     }
 
@@ -458,7 +513,12 @@ mod tests {
         assert_eq!(metrics1.manhattan_distance, metrics2.manhattan_distance);
 
         // After a move, cache should invalidate
-        controller.handle_click((3, 2));
+        if let Some(moves) = controller.handle_click((3, 2)) {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
         let metrics3 = controller.all_entropy_metrics();
 
         // Values should differ (state changed)
@@ -470,8 +530,18 @@ mod tests {
         let mut controller = GameController::new(4).unwrap();
 
         // Make two moves
-        controller.handle_click((3, 2));
-        controller.handle_click((3, 3));
+        if let Some(moves) = controller.handle_click((3, 2)) {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
+        if let Some(moves) = controller.handle_click((3, 3)) {
+            for move_pos in moves {
+                controller.apply_move(move_pos);
+            }
+            controller.complete_move_sequence();
+        }
 
         // Should be back to solved
         assert!(controller.is_solved());

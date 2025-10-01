@@ -82,13 +82,16 @@ impl eframe::App for GuiPresenter {
         // Check if animation is complete
         if let Some(ref anim) = self.animation {
             if anim.is_complete() {
-                // Animation done
+                // Animation done - NOW apply the move to puzzle state
                 let tile_pos = anim.tile_pos;
                 self.animation = None;
 
-                // Apply the auto-solve move after animation completes
+                // Apply the move that just finished animating
                 if self.controller.is_auto_solving() {
                     self.controller.apply_auto_solve_move(tile_pos);
+                } else {
+                    // Manual move - apply it now
+                    self.controller.apply_move(tile_pos);
                 }
 
                 // Start next animation in queue (for chain moves)
@@ -101,6 +104,9 @@ impl eframe::App for GuiPresenter {
                         old_empty,
                         200,
                     ));
+                } else if !self.controller.is_auto_solving() {
+                    // All animations done - complete the move sequence
+                    self.controller.complete_move_sequence();
                 }
             } else {
                 ctx.request_repaint(); // Continue animating
