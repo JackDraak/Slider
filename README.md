@@ -108,24 +108,31 @@ All shuffles are guaranteed solvable because they're generated using the same mo
 
 ## Architecture
 
-The codebase follows the **Model-Controller-Presenter (MCP)** pattern:
+The codebase follows the **Model-Controller-Presenter (MCP)** pattern with clean separation of concerns:
 
 ### Model Layer (`src/model/`)
-- **`puzzle_state.rs`**: Core game state, grid management
+Core game logic and data structures, completely independent of UI:
+
+- **`puzzle_state.rs`**: Core game state, grid management, and move operations
 - **`tile.rs`**: Tile abstraction with content enum (Numeric/Image placeholder)
 - **`move_validator.rs`**: Legal move validation and chain move resolution
-- **`entropy.rs`**: Entropy calculators (Manhattan Distance, Shortest Path)
-- **`solver.rs`**: A\* pathfinding for optimal solution computation
-- **`error.rs`**: Proper error types (no panics in library code)
-- **`performance.rs`**: Timing utilities for algorithm benchmarking
+- **`entropy.rs`**: Multiple entropy calculators (Manhattan Distance, Shortest Path, Enhanced)
+- **`solver.rs`**: A\* pathfinding with memory-efficient implementation and cancellation support
+- **`enhanced_heuristic.rs`**: Advanced heuristic combining multiple complexity metrics
+- **`error.rs`**: Comprehensive error types (no panics in library code)
+- **`performance.rs`**: High-precision timing utilities for algorithm benchmarking
 
 ### Controller Layer (`src/controller/`)
-- **`game_controller.rs`**: Game orchestration, move handling, auto-solve, metric caching
-- **`shuffle_controller.rs`**: Puzzle shuffling with entropy requirements
+Game orchestration and business logic:
+
+- **`game_controller.rs`**: Complete game orchestration, move handling, auto-solve, metric caching
+- **`shuffle_controller.rs`**: Entropy-based puzzle shuffling with solvability guarantees
 
 ### Presenter Layer (`src/presenter/`)
-- **`gui_presenter.rs`**: egui-based GUI with controls and state display
-- **`tile_renderer.rs`**: Visual tile rendering with hover effects
+UI rendering and user interaction:
+
+- **`gui_presenter.rs`**: egui-based GUI with comprehensive controls and real-time state display
+- **`tile_renderer.rs`**: Visual tile rendering with smooth animations and hover effects
 
 ## Development
 
@@ -163,6 +170,8 @@ cargo clippy
 
 ## Programmatic Usage
 
+### Basic Game Control
+
 ```rust
 use slider::{GameController, Difficulty};
 
@@ -190,6 +199,70 @@ println!("A* calc time: {}μs", metrics.performance.actual_time_micros);
 
 // Auto-solve the puzzle
 game.start_auto_solve();
+```
+
+### Direct Puzzle State Manipulation
+
+```rust
+use slider::model::{PuzzleState, ManhattanDistance, AStarSolver};
+
+// Create and manipulate puzzle state directly
+let mut puzzle = PuzzleState::new(4)?;
+
+// Apply moves programmatically
+puzzle.apply_immediate_move((3, 2))?;
+puzzle.apply_immediate_move((2, 2))?;
+
+// Calculate entropy
+let entropy = ManhattanDistance.calculate(&puzzle);
+println!("Current entropy: {}", entropy);
+
+// Solve the puzzle
+let solver = AStarSolver::new();
+if let Some(solution_length) = solver.solve(&puzzle) {
+    println!("Optimal solution: {} moves", solution_length);
+    
+    // Get full solution path
+    if let Some(path) = solver.solve_with_path(&puzzle) {
+        println!("Solution path: {:?}", path);
+    }
+}
+```
+
+### Custom Entropy Calculation
+
+```rust
+use slider::model::{PuzzleState, EnhancedHeuristic, ShortestPathHeuristic};
+
+let puzzle = PuzzleState::new(4)?;
+
+// Compare different heuristics
+let enhanced = EnhancedHeuristic;
+let shortest_path = ShortestPathHeuristic;
+
+let enhanced_score = enhanced.calculate(&puzzle);
+let shortest_score = shortest_path.calculate(&puzzle);
+
+println!("Enhanced heuristic: {}", enhanced_score);
+println!("Shortest path heuristic: {}", shortest_score);
+```
+
+### Benchmarking Solver Performance
+
+```rust
+use slider::model::{PuzzleState, AStarSolver, PerformanceTimer};
+use std::time::Duration;
+
+let solver = AStarSolver::new();
+let puzzle = PuzzleState::new(4)?;
+
+// Time the solver
+let timer = PerformanceTimer::new();
+let solution = solver.solve(&puzzle);
+let elapsed = timer.elapsed();
+
+println!("Solver took: {:?}", elapsed);
+println!("Solution length: {:?}", solution);
 ```
 
 ## Performance Optimizations

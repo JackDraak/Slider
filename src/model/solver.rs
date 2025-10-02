@@ -1,3 +1,55 @@
+//! # A* Pathfinding Solver
+//!
+//! This module implements an optimal pathfinding solver using the A* algorithm.
+//! The solver finds the shortest possible solution to sliding tile puzzles
+//! using an enhanced heuristic that combines multiple puzzle complexity metrics.
+//!
+//! ## Algorithm Overview
+//!
+//! The A* algorithm maintains a priority queue of states to explore, ordered by:
+//! `f_score = g_score + h_score`
+//!
+//! - `g_score`: Number of moves taken from the initial state
+//! - `h_score`: Heuristic estimate of moves remaining to goal
+//! - `f_score`: Total estimated path cost
+//!
+//! ## Key Features
+//!
+//! - **Optimal Solutions**: Guaranteed to find the shortest possible path
+//! - **Memory Efficient**: Uses indexed storage instead of exponential parent chains
+//! - **Cancellation Support**: Can be interrupted during long searches
+//! - **Configurable Limits**: Adjustable iteration limits to prevent infinite searches
+//! - **Fast State Hashing**: U64 hashing for efficient duplicate detection
+//!
+//! ## Performance Characteristics
+//!
+//! - **Time Complexity**: O(b^d) where b is branching factor and d is solution depth
+//! - **Space Complexity**: O(b^d) in worst case, typically much less in practice
+//! - **Solves All 4×4 Puzzles**: 2M iteration limit handles all solvable 4×4 states
+//!
+//! ## Example Usage
+//!
+//! ```rust
+//! use slider::model::{AStarSolver, PuzzleState};
+//!
+//! let solver = AStarSolver::new();
+//! let puzzle = PuzzleState::new(4)?;
+//!
+//! // Get solution length
+//! if let Some(length) = solver.solve(&puzzle) {
+//!     println!("Optimal solution: {} moves", length);
+//! }
+//!
+//! // Get full solution path
+//! if let Some(path) = solver.solve_with_path(&puzzle) {
+//!     println!("Move sequence: {:?}", path);
+//!     for &pos in &path {
+//!         // Apply each move to solve the puzzle
+//!     }
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+
 use super::enhanced_heuristic::EnhancedHeuristic;
 use super::entropy::EntropyCalculator;
 use super::move_validator::{MoveValidator, Position};

@@ -15,19 +15,3 @@ eframe = "0.30"
 rand = "0.8"
 
 [dev-dependencies]
-
-[[bench]]
-name = "pattern_benchmark"
-harness = false
-
-[[bench]]
-name = "large_puzzle_test"
-harness = false
-
-[[bench]]
-name = "relative_pattern_benchmark"
-harness = false
-
-[[bench]]
-name = "hash_pattern_benchmark"
-harness = false
